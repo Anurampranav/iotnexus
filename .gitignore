@@ -1,0 +1,30 @@
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native Android build artifacts
+android/app/build/
+android/build/
+android/.gradle/
+android/.idea/
+android/app/build.gradle.kts.bak
+*.keystore
+*.jks
+
+# Logs
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.log
+
+# OS & Temp files
+.DS_Store
+*.pem
+Thumbs.db
+*.tmp
+*.png.bak
