@@ -11,6 +11,7 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableMap
 import com.smartcodeflurry.app.BuildConfig
 import com.thingclips.smart.home.sdk.ThingHomeSdk
+import com.thingclips.smart.api.router.UrlRouter
 
 class TuyaModule(private val reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
 
@@ -56,11 +57,11 @@ class TuyaModule(private val reactContext: ReactApplicationContext) : ReactConte
                     promise.resolve(response)
                 } catch (e: Exception) {
                     isInitialized = false
-                    promise.reject("INIT_ERROR", "Failed to initialize Tuya SDK: ${e.message}", e)
+                    promise.reject("INIT_ERROR", "Failed to initialize Tuya SDK: ", e)
                 }
             }
         } catch (e: Exception) {
-            promise.reject("INIT_ERROR", "Error dispatching Tuya init: ${e.message}", e)
+            promise.reject("INIT_ERROR", "Error dispatching Tuya init: ", e)
         }
     }
 
@@ -73,7 +74,45 @@ class TuyaModule(private val reactContext: ReactApplicationContext) : ReactConte
             }
             promise.resolve(response)
         } catch (e: Exception) {
-            promise.reject("STATUS_ERROR", "Failed to get Tuya SDK status: ${e.message}", e)
+            promise.reject("STATUS_ERROR", "Failed to get Tuya SDK status: ", e)
+        }
+    }
+
+    @ReactMethod
+    fun startDevicePairing(promise: Promise) {
+        try {
+            val act = reactContext.currentActivity
+            if (act == null) {
+                promise.reject("ACTIVITY_ERROR", "Current activity is null")
+                return
+            }
+
+            val mainHandler = Handler(Looper.getMainLooper())
+            mainHandler.post {
+                try {
+                    UrlRouter.execute(act, "thingSmart://device_active")
+
+                    val response = Arguments.createMap().apply {
+                        putBoolean("started", true)
+                        putString("status", "PAIRING_LAUNCHED")
+                    }
+                    promise.resolve(response)
+                } catch (e: Exception) {
+                    try {
+                        UrlRouter.execute(act, "thingSmart://device_activator")
+
+                        val response = Arguments.createMap().apply {
+                            putBoolean("started", true)
+                            putString("status", "PAIRING_LAUNCHED")
+                        }
+                        promise.resolve(response)
+                    } catch (err: Exception) {
+                        promise.reject("PAIRING_ERROR", "Failed to launch Tuya pairing UI: ", e)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            promise.reject("PAIRING_ERROR", "Error launching Tuya device pairing: ", e)
         }
     }
 }

@@ -127,6 +127,9 @@ android {
             useLegacyPackaging enableLegacyPackaging.toBoolean()
             pickFirsts += ['**/libc++_shared.so', '**/libjsc.so']
         }
+        resources {
+            pickFirsts += ['**/META-INF/INDEX.LIST', 'META-INF/INDEX.LIST']
+        }
     }
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
@@ -161,7 +164,11 @@ dependencies {
     // Exclude thingsmart-modularCampAnno (Tuya-internal annotation processor, only exists as
     // SNAPSHOT, not needed at runtime or for our native bridge)
     implementation fileTree(dir: "libs", include: ["*.aar", "*.jar"])
-    implementation('com.thingclips.smart:thingsmart:7.5.1') {
+    implementation('com.thingclips.smart:thingsmart-bizbundle-device_activator:7.5.1') {
+        exclude group: 'com.thingclips.smart', module: 'react-native'
+        exclude group: 'com.thingclips.smart', module: 'thingsmart-modularCampAnno'
+    }
+    implementation('com.thingclips.smart:thingsmart:7.8.0') {
         exclude group: 'com.thingclips.smart', module: 'thingsmart-modularCampAnno'
     }
     implementation 'com.alibaba:fastjson:1.1.67.android'

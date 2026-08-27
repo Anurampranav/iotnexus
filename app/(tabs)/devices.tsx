@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
+import Tuya from '../../src/native/Tuya';
 import { useDeviceStore } from '@store/deviceStore';
 import { GlassInput } from '@components/glass/GlassInput';
 import { DeviceCard } from '@components/device/DeviceCard';
@@ -59,8 +60,9 @@ export default function DevicesScreen() {
 
   const filtered = getFilteredDevices();
 
-  const handleAddDevice = () => {
-    // Navigate to Add Device flow (Phase 4/5)
+  const handleAddDevice = async () => {
+    const result = await Tuya.startDevicePairing();
+    if (result && result.deviceId) { loadDevices(); }
   };
 
   return (

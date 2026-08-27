@@ -14,6 +14,16 @@ export interface TuyaStatus {
   code?: string;
 }
 
+export interface TuyaPairingResult {
+  started: boolean;
+  status: string;
+  deviceId?: string;
+  deviceName?: string;
+  category?: string;
+  error?: string;
+  code?: string;
+}
+
 export const Tuya = {
   /**
    * Initializes the native Tuya Smart Life App SDK (ThingHomeSdk).
@@ -73,6 +83,32 @@ export const Tuya = {
         sdkVersion: '7.8.0',
         error: err?.message || 'Failed to get status',
         code: err?.code || 'STATUS_FAILED',
+      };
+    }
+  },
+
+  /**
+   * Launches the official Tuya Device Pairing UI BizBundle.
+   */
+  startDevicePairing: async (): Promise<TuyaPairingResult> => {
+    if (Platform.OS !== 'android' || !TuyaNativeModule) {
+      return {
+        started: false,
+        status: 'UNAVAILABLE',
+        error: 'Native module unavailable for pairing',
+        code: 'UNAVAILABLE',
+      };
+    }
+
+    try {
+      const result = await TuyaNativeModule.startDevicePairing();
+      return result as TuyaPairingResult;
+    } catch (err: any) {
+      return {
+        started: false,
+        status: 'FAILED',
+        error: err?.message || 'Failed to launch device pairing UI',
+        code: err?.code || 'PAIRING_FAILED',
       };
     }
   },
