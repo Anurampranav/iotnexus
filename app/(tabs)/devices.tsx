@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
-import Tuya from '../../src/native/Tuya';
 import { useDeviceStore } from '@store/deviceStore';
 import { GlassInput } from '@components/glass/GlassInput';
 import { DeviceCard } from '@components/device/DeviceCard';
@@ -10,6 +9,7 @@ import { EmptyState } from '@components/shared/EmptyState';
 import { Colors, Typography, Spacing, Radius } from '@design/tokens';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { DeviceType } from '@models/device';
+import { Tuya } from '../../src/native/Tuya';
 
 type FilterType = 'all' | 'sensors' | 'pumps' | 'lights' | 'other';
 
@@ -61,8 +61,11 @@ export default function DevicesScreen() {
   const filtered = getFilteredDevices();
 
   const handleAddDevice = async () => {
-    const result = await Tuya.startDevicePairing();
-    if (result && result.deviceId) { loadDevices(); }
+    try {
+      await Tuya.startDevicePairing();
+    } catch (err: any) {
+      Alert.alert('Add Device Error', err?.message || 'Failed to open device pairing screen.');
+    }
   };
 
   return (

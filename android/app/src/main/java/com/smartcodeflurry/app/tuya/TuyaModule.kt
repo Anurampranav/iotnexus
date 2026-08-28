@@ -1,8 +1,10 @@
 package com.smartcodeflurry.app.tuya
 
 import android.app.Application
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -11,11 +13,11 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableMap
 import com.smartcodeflurry.app.BuildConfig
 import com.thingclips.smart.home.sdk.ThingHomeSdk
-import com.thingclips.smart.api.router.UrlRouter
 
 class TuyaModule(private val reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
 
     companion object {
+        private const val TAG = "TuyaNativeModule"
         const val MODULE_NAME = "TuyaNativeModule"
         const val SDK_VERSION = "7.8.0"
         private var isInitialized = false
@@ -43,7 +45,6 @@ class TuyaModule(private val reactContext: ReactApplicationContext) : ReactConte
                     if (!appKey.isNullOrEmpty() && !appSecret.isNullOrEmpty()) {
                         ThingHomeSdk.init(app, appKey, appSecret)
                     } else {
-                        // Initialize using AndroidManifest meta-data if present
                         ThingHomeSdk.init(app)
                     }
 
@@ -57,11 +58,11 @@ class TuyaModule(private val reactContext: ReactApplicationContext) : ReactConte
                     promise.resolve(response)
                 } catch (e: Exception) {
                     isInitialized = false
-                    promise.reject("INIT_ERROR", "Failed to initialize Tuya SDK: ", e)
+                    promise.reject("INIT_ERROR", "Failed to initialize Tuya SDK: ${e.message}", e)
                 }
             }
         } catch (e: Exception) {
-            promise.reject("INIT_ERROR", "Error dispatching Tuya init: ", e)
+            promise.reject("INIT_ERROR", "Error dispatching Tuya init: ${e.message}", e)
         }
     }
 
@@ -74,45 +75,53 @@ class TuyaModule(private val reactContext: ReactApplicationContext) : ReactConte
             }
             promise.resolve(response)
         } catch (e: Exception) {
-            promise.reject("STATUS_ERROR", "Failed to get Tuya SDK status: ", e)
+            promise.reject("STATUS_ERROR", "Failed to get Tuya SDK status: ${e.message}", e)
         }
     }
 
     @ReactMethod
     fun startDevicePairing(promise: Promise) {
-        try {
-            val act = reactContext.currentActivity
-            if (act == null) {
-                promise.reject("ACTIVITY_ERROR", "Current activity is null")
-                return
-            }
+        Log.d(TAG, "startDevicePairing called from JS")
+        val activity = reactApplicationContext.currentActivity
 
-            val mainHandler = Handler(Looper.getMainLooper())
-            mainHandler.post {
-                try {
-                    UrlRouter.execute(act, "thingSmart://device_active")
-
-                    val response = Arguments.createMap().apply {
-                        putBoolean("started", true)
-                        putString("status", "PAIRING_LAUNCHED")
-                    }
-                    promise.resolve(response)
-                } catch (e: Exception) {
+        Handler(Looper.getMainLooper()).post {
+            try {
+                if (!isInitialized) {
                     try {
-                        UrlRouter.execute(act, "thingSmart://device_activator")
-
-                        val response = Arguments.createMap().apply {
-                            putBoolean("started", true)
-                            putString("status", "PAIRING_LAUNCHED")
-                        }
-                        promise.resolve(response)
-                    } catch (err: Exception) {
-                        promise.reject("PAIRING_ERROR", "Failed to launch Tuya pairing UI: ", e)
+                        val app = reactContext.applicationContext as Application
+                        ThingHomeSdk.init(app)
+                        ThingHomeSdk.setDebugMode(BuildConfig.DEBUG)
+                        isInitialized = true
+                        Log.d(TAG, "ThingHomeSdk lazily initialized")
+                    } catch (initErr: Exception) {
+                        Log.e(TAG, "Lazy init error", initErr)
                     }
                 }
+                
+                val intent = if (activity != null) {
+                    Intent(activity, TuyaPairingActivity::class.java)
+                } else {
+                    Intent(reactApplicationContext, TuyaPairingActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                }
+                
+                if (activity != null) {
+                    activity.startActivity(intent)
+                } else {
+                    reactApplicationContext.startActivity(intent)
+                }
+                
+                val response = Arguments.createMap().apply {
+                    putBoolean("started", true)
+                    putString("status", "PAIRING_LAUNCHED")
+                }
+                promise.resolve(response)
+                Log.d(TAG, "TuyaPairingActivity launched successfully")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error launching TuyaPairingActivity", e)
+                promise.reject("PAIRING_ERROR", "Failed to launch pairing UI: ${e.message}", e)
             }
-        } catch (e: Exception) {
-            promise.reject("PAIRING_ERROR", "Error launching Tuya device pairing: ", e)
         }
     }
 }

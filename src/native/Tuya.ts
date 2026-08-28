@@ -14,16 +14,6 @@ export interface TuyaStatus {
   code?: string;
 }
 
-export interface TuyaPairingResult {
-  started: boolean;
-  status: string;
-  deviceId?: string;
-  deviceName?: string;
-  category?: string;
-  error?: string;
-  code?: string;
-}
-
 export const Tuya = {
   /**
    * Initializes the native Tuya Smart Life App SDK (ThingHomeSdk).
@@ -88,29 +78,17 @@ export const Tuya = {
   },
 
   /**
-   * Launches the official Tuya Device Pairing UI BizBundle.
+   * Launches the native Tuya Device Pairing screen (EZ / AP Wi-Fi mode).
+   * Opens TuyaPairingActivity which drives the ThingHomeSdk activator flow.
    */
-  startDevicePairing: async (): Promise<TuyaPairingResult> => {
-    if (Platform.OS !== 'android' || !TuyaNativeModule) {
-      return {
-        started: false,
-        status: 'UNAVAILABLE',
-        error: 'Native module unavailable for pairing',
-        code: 'UNAVAILABLE',
-      };
+  startDevicePairing: async (): Promise<void> => {
+    if (Platform.OS !== 'android') {
+      throw new Error('Device pairing is only supported on Android in this milestone.');
     }
-
-    try {
-      const result = await TuyaNativeModule.startDevicePairing();
-      return result as TuyaPairingResult;
-    } catch (err: any) {
-      return {
-        started: false,
-        status: 'FAILED',
-        error: err?.message || 'Failed to launch device pairing UI',
-        code: err?.code || 'PAIRING_FAILED',
-      };
+    if (!TuyaNativeModule) {
+      throw new Error('TuyaNativeModule is not linked in native runtime.');
     }
+    await TuyaNativeModule.startDevicePairing();
   },
 };
 
