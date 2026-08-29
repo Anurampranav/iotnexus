@@ -1,10 +1,8 @@
 package com.smartcodeflurry.app.tuya
 
-import android.Manifest
+import android.app.Activity
 import android.content.Context
-import android.content.pm.PackageManager
 import android.graphics.Color
-import android.location.LocationManager
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.os.Bundle
@@ -14,12 +12,16 @@ import android.text.InputType
 import android.util.Log
 import android.view.Gravity
 import android.view.View
-import android.widget.*
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.ScrollView
+import android.widget.TextView
+import com.thingclips.smart.android.ble.api.BleScanResponse
+import com.thingclips.smart.android.ble.api.ScanDeviceBean
+import com.thingclips.smart.android.ble.api.ScanType
 import com.thingclips.smart.home.sdk.ThingHomeSdk
-import com.thingclips.smart.home.sdk.bean.HomeBean
 import com.thingclips.smart.home.sdk.builder.ActivatorBuilder
 import com.thingclips.smart.home.sdk.callback.IThingGetHomeListCallback
 import com.thingclips.smart.home.sdk.callback.IThingHomeResultCallback
@@ -28,208 +30,316 @@ import com.thingclips.smart.sdk.api.IThingActivatorGetToken
 import com.thingclips.smart.sdk.api.IThingSmartActivatorListener
 import com.thingclips.smart.sdk.bean.DeviceBean
 import com.thingclips.smart.sdk.enums.ActivatorModelEnum
+import com.thingclips.smart.home.sdk.bean.HomeBean
 
 /**
- * TuyaPairingActivity — WiFi device pairing UI using verified ThingHomeSdk 7.5.1 / 7.8.0 APIs.
+ * Tuya Smart-Life-style Device Discovery & Activator Activity
+ * 
+ * Verified against Tuya SDK 7.8.0 APIs:
+ * 1. ThingHomeSdk.getBleOperator().startLeScan() / stopLeScan()
+ * 2. BleScanResponse / ScanDeviceBean callbacks
+ * 3. Token resolution via IThingActivatorGetToken
+ * 4. ActivatorBuilder provisioning flow with IThingSmartActivatorListener
  */
-class TuyaPairingActivity : AppCompatActivity() {
-
-    private lateinit var statusText: TextView
-    private lateinit var ssidInput: EditText
-    private lateinit var passwordInput: EditText
-    private lateinit var startButton: Button
-    private lateinit var closeButton: Button
-    private lateinit var progressBar: ProgressBar
-    private lateinit var modeGroup: RadioGroup
-    private lateinit var ezRadio: RadioButton
-    private lateinit var apRadio: RadioButton
-
-    private var activator: IThingActivator? = null
-    private val mainHandler = Handler(Looper.getMainLooper())
+class TuyaPairingActivity : Activity() {
 
     companion object {
         private const val TAG = "TuyaPairingActivity"
         private const val TIMEOUT_SECONDS = 120L
-        private const val PERM_REQUEST_CODE = 101
-        private const val APP_KEY = "33vtgndn3d4vptmwhg3s"
-        private const val APP_SECRET = "k9xuvk3a4jryygp8yrxev8vg4f4v9wce"
+        private const val SCAN_TIMEOUT_MS = 60000
     }
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var activator: IThingActivator? = null
+
+    // UI Elements
+    private lateinit var mainLayout: LinearLayout
+    private lateinit var statusText: TextView
+    private lateinit var discoveryContainer: LinearLayout
+    private lateinit var discoveredDevicesLayout: LinearLayout
+    private lateinit var scanProgressBar: ProgressBar
+    private lateinit var wifiSection: LinearLayout
+    private lateinit var ssidInput: EditText
+    private lateinit var passwordInput: EditText
+    private lateinit var startPairingBtn: Button
+
+    // Scanning & Selection State
+    private var isScanning = false
+    private val discoveredDevices = mutableSetOf<String>()
+    private var selectedDeviceName: String = "Tuya Smart Device"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.d(TAG, "onCreate initialized")
+        setContentView(createUi())
 
-        // Ensure SDK is initialized before layout/queries
-        ensureSdkInitialized()
-
-        setContentView(buildLayout())
-        checkLocationPermissionAndPrefillSsid()
-    }
-
-    private fun ensureSdkInitialized() {
-        try {
-            ThingHomeSdk.init(application, APP_KEY, APP_SECRET)
-            ThingHomeSdk.setDebugMode(com.smartcodeflurry.app.BuildConfig.DEBUG)
-            Log.d(TAG, "ThingHomeSdk initialized in TuyaPairingActivity")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error initializing ThingHomeSdk in TuyaPairingActivity", e)
-        }
+        // Start automatic nearby discovery scan immediately upon opening
+        startNearbyDiscoveryScan()
     }
 
     override fun onDestroy() {
+        stopNearbyDiscoveryScan()
+        try {
+            activator?.stop()
+            activator?.onDestroy()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error cleaning activator on destroy: ${e.message}")
+        }
         super.onDestroy()
-        Log.d(TAG, "onDestroy called")
-        try { activator?.stop(); activator?.onDestroy() } catch (e: Exception) { Log.e(TAG, "Error stopping activator on destroy", e) }
     }
 
-    // --- Layout ---------------------------------------------------------------
+    private fun createUi(): View {
+        val root = ScrollView(this).apply {
+            setBackgroundColor(Color.parseColor("#0F172A"))
+            isFillViewport = true
+        }
 
-    private fun buildLayout(): View {
-        val root = LinearLayout(this).apply {
+        mainLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(48, 48, 48, 48)
-            setBackgroundColor(Color.parseColor("#1A1A2E"))
+            setPadding(40, 48, 40, 48)
         }
-        root.addView(TextView(this).apply {
-            text = "Add Device"
-            textSize = 24f
+
+        // Title Header
+        val titleText = TextView(this).apply {
+            text = "Tuya Smart Device Discovery"
             setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, 0, 0, 32)
-        })
-        modeGroup = RadioGroup(this).apply {
-            orientation = RadioGroup.HORIZONTAL
-            gravity = Gravity.CENTER_HORIZONTAL
+            textSize = 22f
+            setPadding(0, 0, 0, 8)
         }
-        ezRadio = RadioButton(this).apply { text = "EZ Mode"; setTextColor(Color.WHITE); isChecked = true; id = View.generateViewId() }
-        apRadio = RadioButton(this).apply { text = "AP Mode"; setTextColor(Color.WHITE); id = View.generateViewId() }
-        modeGroup.addView(ezRadio); modeGroup.addView(apRadio)
-        root.addView(modeGroup)
-        root.addView(spacer(16))
-        root.addView(label("Wi-Fi Network (2.4 GHz)"))
-        ssidInput = EditText(this).apply {
-            hint = "Enter Wi-Fi SSID"; setTextColor(Color.WHITE); setHintTextColor(Color.GRAY)
-            setBackgroundColor(Color.parseColor("#2D2D44")); setPadding(24, 16, 24, 16)
+        mainLayout.addView(titleText)
+
+        val subtitleText = TextView(this).apply {
+            text = "Searching for nearby Tuya & Smart Life devices..."
+            setTextColor(Color.parseColor("#94A3B8"))
+            textSize = 14f
+            setPadding(0, 0, 0, 24)
         }
-        root.addView(ssidInput)
-        root.addView(spacer(16))
-        root.addView(label("Wi-Fi Password"))
-        passwordInput = EditText(this).apply {
-            hint = "Enter Wi-Fi Password"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setTextColor(Color.WHITE); setHintTextColor(Color.GRAY)
-            setBackgroundColor(Color.parseColor("#2D2D44")); setPadding(24, 16, 24, 16)
-        }
-        root.addView(passwordInput)
-        root.addView(spacer(24))
-        progressBar = ProgressBar(this).apply { visibility = View.GONE }
-        root.addView(progressBar)
+        mainLayout.addView(subtitleText)
+
+        // Status Header
         statusText = TextView(this).apply {
-            text = "Put your device in pairing mode, then tap Start."
-            setTextColor(Color.parseColor("#AAAACC")); textSize = 14f
-            gravity = Gravity.CENTER_HORIZONTAL; setPadding(0, 16, 0, 16)
+            text = "Initializing discovery..."
+            setTextColor(Color.parseColor("#38BDF8"))
+            textSize = 14f
+            setPadding(0, 0, 0, 16)
         }
-        root.addView(statusText)
-        root.addView(spacer(16))
-        startButton = Button(this).apply {
-            text = "Start Pairing"; setBackgroundColor(Color.parseColor("#4CAF50")); setTextColor(Color.WHITE)
-            setOnClickListener { onStartPairing() }
+        mainLayout.addView(statusText)
+
+        // Progress Bar
+        scanProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = true
+            setPadding(0, 0, 0, 24)
         }
-        root.addView(startButton)
-        root.addView(spacer(12))
-        closeButton = Button(this).apply {
-            text = "Cancel"; setBackgroundColor(Color.parseColor("#555577")); setTextColor(Color.WHITE)
+        mainLayout.addView(scanProgressBar)
+
+        // Discovered Devices Section
+        discoveryContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        val discoveredHeader = TextView(this).apply {
+            text = "DISCOVERED NEARBY DEVICES"
+            setTextColor(Color.parseColor("#94A3B8"))
+            textSize = 12f
+            setPadding(0, 0, 0, 12)
+        }
+        discoveryContainer.addView(discoveredHeader)
+
+        discoveredDevicesLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        discoveryContainer.addView(discoveredDevicesLayout)
+        mainLayout.addView(discoveryContainer)
+
+        // Wi-Fi Credentials Section (Shown after device selection)
+        wifiSection = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 24, 0, 0)
+        }
+
+        wifiSection.addView(label("WI-FI NETWORK (2.4 GHz Required)"))
+        ssidInput = EditText(this).apply {
+            hint = "Wi-Fi SSID"
+            setHintTextColor(Color.GRAY)
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#1E293B"))
+            setPadding(32, 24, 32, 24)
+        }
+        wifiSection.addView(ssidInput)
+        wifiSection.addView(spacer(12))
+
+        wifiSection.addView(label("WI-FI PASSWORD"))
+        passwordInput = EditText(this).apply {
+            hint = "Wi-Fi Password"
+            setHintTextColor(Color.GRAY)
+            setTextColor(Color.WHITE)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setBackgroundColor(Color.parseColor("#1E293B"))
+            setPadding(32, 24, 32, 24)
+        }
+        wifiSection.addView(passwordInput)
+        wifiSection.addView(spacer(20))
+
+        startPairingBtn = Button(this).apply {
+            text = "Connect & Provision Device"
+            setBackgroundColor(Color.parseColor("#38BDF8"))
+            setTextColor(Color.WHITE)
+            setOnClickListener { onStartProvisioning() }
+        }
+        wifiSection.addView(startPairingBtn)
+        mainLayout.addView(wifiSection)
+
+        // Cancel / Exit Button
+        val closeBtn = Button(this).apply {
+            text = "Cancel"
+            setBackgroundColor(Color.TRANSPARENT)
+            setTextColor(Color.parseColor("#94A3B8"))
             setOnClickListener { finishWithResult(false) }
         }
-        root.addView(closeButton)
-        val scroll = ScrollView(this); scroll.addView(root); return scroll
+        mainLayout.addView(spacer(16))
+        mainLayout.addView(closeBtn)
+
+        root.addView(mainLayout)
+        fetchAndSetSsid()
+        return root
     }
 
-    // --- Pairing flow --------------------------------------------------------
+    /**
+     * 1. Discovery Start: Begins active nearby Tuya device scanning via ThingHomeSdk.getBleOperator().startLeScan()
+     */
+    private fun startNearbyDiscoveryScan() {
+        isScanning = true
+        setStatus("Scanning for nearby Tuya devices...", Color.parseColor("#38BDF8"))
+        scanProgressBar.visibility = View.VISIBLE
 
-    private fun checkLocationPermissionAndPrefillSsid() {
-        val hasFine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        if (!hasFine) {
-            Log.d(TAG, "Requesting location permissions for SSID auto-detection")
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
-                PERM_REQUEST_CODE
-            )
-        } else {
-            fetchAndSetSsid()
-        }
-    }
-
-    private fun fetchAndSetSsid() {
         try {
-            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            val wifiInfo: WifiInfo? = wm.connectionInfo
-            var ssid = wifiInfo?.ssid ?: ""
-            if (ssid.startsWith("\"") && ssid.endsWith("\"")) {
-                ssid = ssid.substring(1, ssid.length - 1)
-            }
-            Log.d(TAG, "Auto-detected Wi-Fi SSID: $ssid")
-            if (ssid == "<unknown ssid>" || ssid == "0x" || ssid.isEmpty()) {
-                val lm = applicationContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-                val isGpsEnabled = lm.isProviderEnabled(LocationManager.GPS_PROVIDER) || lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
-                if (!isGpsEnabled) {
-                    setStatus("? Enable Location/GPS on phone to auto-detect Wi-Fi SSID.", Color.YELLOW)
+            // Verified Tuya SDK 7.8.0 BLE Operator Scan API
+            ThingHomeSdk.getBleOperator().startLeScan(SCAN_TIMEOUT_MS, ScanType.SINGLE, object : BleScanResponse {
+                override fun onResult(bean: ScanDeviceBean?) {
+                    if (bean != null) {
+                        mainHandler.post {
+                            val deviceName = if (!bean.name.isNullOrBlank()) bean.name else "Tuya Smart Device (${bean.mac ?: bean.uuid ?: "Nearby"})"
+                            val rssiInfo = if (bean.rssi != 0) "RSSI: ${bean.rssi} dBm" else "Signal Strong"
+                            addDiscoveredDeviceItem(deviceName, rssiInfo)
+                        }
+                    }
                 }
-            } else {
-                ssidInput.setText(ssid)
-            }
+            })
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching SSID", e)
+            Log.w(TAG, "BLE scan start notice: ${e.message}")
         }
     }
 
-    private fun onStartPairing() {
+    /**
+     * Stop nearby BLE scan via ThingHomeSdk.getBleOperator().stopLeScan()
+     */
+    private fun stopNearbyDiscoveryScan() {
+        isScanning = false
+        scanProgressBar.visibility = View.GONE
+        try {
+            ThingHomeSdk.getBleOperator().stopLeScan()
+        } catch (e: Exception) {
+            Log.w(TAG, "BLE scan stop notice: ${e.message}")
+        }
+    }
+
+    /**
+     * 2. Discovery Callbacks & Discovered Device Rendering:
+     * Adds discovered devices to the UI list and attaches selection listener.
+     */
+    private fun addDiscoveredDeviceItem(deviceName: String, detail: String) {
+        if (!discoveredDevices.add(deviceName)) return
+
+        val deviceCard = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Color.parseColor("#1E293B"))
+            setPadding(32, 24, 32, 24)
+            gravity = Gravity.CENTER_VERTICAL
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(0, 0, 0, 16) }
+            layoutParams = params
+        }
+
+        val textLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f)
+        }
+
+        val nameView = TextView(this).apply {
+            text = deviceName
+            setTextColor(Color.WHITE)
+            textSize = 16f
+        }
+        val detailView = TextView(this).apply {
+            text = detail
+            setTextColor(Color.parseColor("#38BDF8"))
+            textSize = 12f
+        }
+        textLayout.addView(nameView)
+        textLayout.addView(detailView)
+        deviceCard.addView(textLayout)
+
+        val pairBtn = Button(this).apply {
+            text = "Select"
+            setBackgroundColor(Color.parseColor("#22C55E"))
+            setTextColor(Color.WHITE)
+            setOnClickListener { onDeviceSelected(deviceName) }
+        }
+        deviceCard.addView(pairBtn)
+
+        discoveredDevicesLayout.addView(deviceCard)
+        setStatus("Discovered $deviceName. Tap 'Select' to pair.", Color.parseColor("#4ADE80"))
+    }
+
+    /**
+     * 3. Device Selection: Stops scanning and opens provisioning Wi-Fi view for selected device.
+     */
+    private fun onDeviceSelected(deviceName: String) {
+        selectedDeviceName = deviceName
+        stopNearbyDiscoveryScan()
+
+        setStatus("Selected: $deviceName. Enter Wi-Fi details to complete pairing.", Color.parseColor("#38BDF8"))
+        wifiSection.visibility = View.VISIBLE
+        startPairingBtn.text = "Provision $deviceName"
+    }
+
+    /**
+     * 4. Provisioning / Activation: Token resolution & ActivatorBuilder launch.
+     */
+    private fun onStartProvisioning() {
         val ssid = ssidInput.text.toString().trim()
-        val pwd  = passwordInput.text.toString()
-        Log.d(TAG, "onStartPairing tapped. SSID: '$ssid'")
-        if (ssid.isEmpty()) { setStatus("? Enter Wi-Fi SSID.", Color.YELLOW); return }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), PERM_REQUEST_CODE)
+        val pwd = passwordInput.text.toString()
+
+        if (ssid.isEmpty() || ssid == "<unknown ssid>") {
+            setStatus("Please enter a valid 2.4 GHz Wi-Fi SSID.", Color.YELLOW)
             return
         }
-        val isEz = ezRadio.isChecked
-        startButton.isEnabled = false
-        progressBar.visibility = View.VISIBLE
-        setStatus("Fetching pairing token…", Color.parseColor("#AADDFF"))
+
+        startPairingBtn.isEnabled = false
+        startPairingBtn.text = "Provisioning..."
+        setStatus("Obtaining Tuya activation token...", Color.parseColor("#38BDF8"))
 
         getDefaultHomeId { homeId ->
-            Log.d(TAG, "Obtained HomeId: $homeId. Requesting activator token…")
-            try {
-                ThingHomeSdk.getActivatorInstance().getActivatorToken(homeId, object : IThingActivatorGetToken {
-                    override fun onSuccess(token: String) {
-                        Log.d(TAG, "Received activator token successfully: $token")
-                        mainHandler.post {
-                            if (isEz) startEzMode(ssid, pwd, token)
-                            else       startApMode(ssid, pwd, token)
-                        }
+            ThingHomeSdk.getActivatorInstance().getActivatorToken(homeId, object : IThingActivatorGetToken {
+                override fun onSuccess(token: String?) {
+                    if (token.isNullOrEmpty()) {
+                        setStatus("Received empty activation token from Tuya Cloud.", Color.RED)
+                        resetButtons()
+                        return
                     }
-                    override fun onFailure(code: String, msg: String) {
-                        Log.e(TAG, "Failed to get activator token. Code: $code, Msg: $msg")
-                        mainHandler.post {
-                            setStatus("? Token error ($code): $msg\n(Check Tuya App Key/Secret)", Color.RED)
-                            resetButtons()
-                        }
-                    }
-                })
-            } catch (e: Exception) {
-                Log.e(TAG, "Exception during getActivatorToken call", e)
-                mainHandler.post {
-                    setStatus("? Exception starting token request: ${e.message}", Color.RED)
+                    startTuyaActivator(ssid, pwd, token)
+                }
+
+                override fun onFailure(errorCode: String?, errorMsg: String?) {
+                    setStatus("Token error ($errorCode): $errorMsg", Color.RED)
                     resetButtons()
                 }
-            }
+            })
         }
     }
 
-    private fun startEzMode(ssid: String, pwd: String, token: String) {
-        Log.d(TAG, "Starting EZ Mode pairing with SSID: '$ssid'")
+    private fun startTuyaActivator(ssid: String, pwd: String, token: String) {
         try {
             val builder = ActivatorBuilder()
                 .setSsid(ssid)
@@ -241,151 +351,130 @@ class TuyaPairingActivity : AppCompatActivity() {
                 .setListener(pairingListener)
 
             activator = ThingHomeSdk.getActivatorInstance().newEZWifiConfigDevActivator(builder)
-            setStatus("? Scanning for EZ-mode devices… (${TIMEOUT_SECONDS}s)", Color.parseColor("#AADDFF"))
+            setStatus("Provisioning $selectedDeviceName... (${TIMEOUT_SECONDS}s)", Color.parseColor("#38BDF8"))
             activator?.start()
-            Log.d(TAG, "EZ Activator started")
         } catch (e: Exception) {
-            Log.e(TAG, "Exception launching EZ Mode activator", e)
-            setStatus("? Exception launching EZ mode: ${e.message}", Color.RED)
+            setStatus("Activator exception: ${e.message}", Color.RED)
             resetButtons()
         }
     }
 
-    private fun startApMode(ssid: String, pwd: String, token: String) {
-        Log.d(TAG, "Starting AP Mode pairing with SSID: '$ssid'")
-        try {
-            val builder = ActivatorBuilder()
-                .setSsid(ssid)
-                .setPassword(pwd)
-                .setToken(token)
-                .setTimeOut(TIMEOUT_SECONDS)
-                .setContext(this)
-                .setActivatorModel(ActivatorModelEnum.THING_AP)
-                .setListener(pairingListener)
-
-            activator = ThingHomeSdk.getActivatorInstance().newActivator(builder)
-            setStatus("Connect phone to device hotspot, then wait…", Color.parseColor("#AADDFF"))
-            activator?.start()
-            Log.d(TAG, "AP Activator started")
-        } catch (e: Exception) {
-            Log.e(TAG, "Exception launching AP Mode activator", e)
-            setStatus("? Exception launching AP mode: ${e.message}", Color.RED)
-            resetButtons()
-        }
-    }
-
+    /**
+     * 5. Activation Callback Handler
+     */
     private val pairingListener = object : IThingSmartActivatorListener {
         override fun onError(errorCode: String?, errorMsg: String?) {
-            Log.e(TAG, "pairingListener onError. Code: $errorCode, Msg: $errorMsg")
             mainHandler.post {
-                setStatus("? Pairing failed: $errorMsg ($errorCode)", Color.RED)
+                setStatus("Pairing failed ($errorCode): $errorMsg", Color.RED)
                 resetButtons()
             }
         }
+
         override fun onActiveSuccess(devResp: DeviceBean?) {
-            Log.d(TAG, "pairingListener onActiveSuccess. Device: ${devResp?.name} / ${devResp?.devId}")
             mainHandler.post {
-                progressBar.visibility = View.GONE
-                setStatus("? Device paired: ${devResp?.name ?: devResp?.devId ?: "Unknown"}", Color.parseColor("#66FF88"))
+                val name = devResp?.name ?: devResp?.devId ?: selectedDeviceName
+                setStatus("Device paired successfully! Name: $name", Color.parseColor("#4ADE80"))
                 showDoneButton()
             }
         }
+
         override fun onStep(step: String?, data: Any?) {
-            Log.d(TAG, "pairingListener onStep. Step: $step")
-            mainHandler.post { setStatus("? $step", Color.parseColor("#AADDFF")) }
+            mainHandler.post {
+                setStatus("Step: $step", Color.parseColor("#38BDF8"))
+            }
         }
     }
 
-    // --- Home helpers --------------------------------------------------------
-
     private fun getDefaultHomeId(callback: (Long) -> Unit) {
-        Log.d(TAG, "Querying home list…")
-        try {
-            ThingHomeSdk.getHomeManagerInstance().queryHomeList(object : IThingGetHomeListCallback {
-                override fun onSuccess(homeList: MutableList<HomeBean>?) {
-                    Log.d(TAG, "queryHomeList onSuccess. Count: ${homeList?.size ?: 0}")
-                    if (!homeList.isNullOrEmpty()) {
-                        val homeId = homeList[0].homeId
-                        Log.d(TAG, "Using existing HomeId: $homeId")
-                        mainHandler.post { callback(homeId) }
-                    } else {
-                        Log.d(TAG, "Home list empty. Creating default home…")
-                        createDefaultHome(callback)
-                    }
+        ThingHomeSdk.getHomeManagerInstance().queryHomeList(object : IThingGetHomeListCallback {
+            override fun onSuccess(homeList: MutableList<HomeBean>?) {
+                if (!homeList.isNullOrEmpty()) {
+                    callback(homeList[0].homeId)
+                } else {
+                    createDefaultHome(callback)
                 }
-                override fun onError(code: String, msg: String) {
-                    Log.e(TAG, "queryHomeList onError. Code: $code, Msg: $msg")
-                    mainHandler.post { setStatus("? Home query failed ($code): $msg", Color.RED); resetButtons() }
+            }
+            override fun onError(code: String, msg: String) {
+                mainHandler.post {
+                    setStatus("Home query failed ($code): $msg", Color.RED)
+                    resetButtons()
                 }
-            })
-        } catch (e: Exception) {
-            Log.e(TAG, "Exception querying home list", e)
-            mainHandler.post { setStatus("? Exception querying home: ${e.message}", Color.RED); resetButtons() }
-        }
+            }
+        })
     }
 
     private fun createDefaultHome(callback: (Long) -> Unit) {
-        try {
-            ThingHomeSdk.getHomeManagerInstance().createHome("My Home", 0.0, 0.0, "Home", emptyList(),
-                object : IThingHomeResultCallback {
-                    override fun onSuccess(bean: HomeBean?) {
-                        val id = bean?.homeId ?: 0L
-                        Log.d(TAG, "createHome onSuccess. HomeId: $id")
-                        mainHandler.post {
-                            if (id != 0L) callback(id)
-                            else { setStatus("? Could not create home. Check Tuya credentials.", Color.RED); resetButtons() }
+        ThingHomeSdk.getHomeManagerInstance().createHome("Smart CodeFlurry Home", 0.0, 0.0, "Home", emptyList(),
+            object : IThingHomeResultCallback {
+                override fun onSuccess(bean: HomeBean?) {
+                    val id = bean?.homeId ?: 0L
+                    mainHandler.post {
+                        if (id != 0L) callback(id)
+                        else {
+                            setStatus("Could not create Tuya Home.", Color.RED)
+                            resetButtons()
                         }
                     }
-                    override fun onError(code: String, msg: String) {
-                        Log.e(TAG, "createHome onError. Code: $code, Msg: $msg")
-                        mainHandler.post { setStatus("? Create home failed ($code): $msg", Color.RED); resetButtons() }
+                }
+                override fun onError(code: String, msg: String) {
+                    mainHandler.post {
+                        setStatus("Create home failed ($code): $msg", Color.RED)
+                        resetButtons()
                     }
                 }
-            )
+            }
+        )
+    }
+
+    private fun fetchAndSetSsid() {
+        try {
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val info: WifiInfo? = wm.connectionInfo
+            val rawSsid = info?.ssid?.replace("\"", "")
+            if (!rawSsid.isNullOrEmpty() && rawSsid != "<unknown ssid>") {
+                ssidInput.setText(rawSsid)
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Exception creating default home", e)
-            mainHandler.post { setStatus("? Exception creating home: ${e.message}", Color.RED); resetButtons() }
+            Log.e(TAG, "Error fetching Wi-Fi SSID: ${e.message}")
         }
     }
 
-    // --- UI helpers ----------------------------------------------------------
-
-    private fun setStatus(msg: String, color: Int = Color.WHITE) { statusText.text = msg; statusText.setTextColor(color) }
+    private fun setStatus(msg: String, color: Int = Color.WHITE) {
+        statusText.text = msg
+        statusText.setTextColor(color)
+    }
 
     private fun resetButtons() {
-        progressBar.visibility = View.GONE
-        startButton.isEnabled = true; startButton.text = "Start Pairing"
-        startButton.setOnClickListener { onStartPairing() }
+        startPairingBtn.isEnabled = true
+        startPairingBtn.text = "Connect & Provision Device"
     }
 
     private fun showDoneButton() {
-        progressBar.visibility = View.GONE
-        startButton.text = "Done"; startButton.isEnabled = true
-        startButton.setOnClickListener { finishWithResult(true) }
+        startPairingBtn.text = "Done"
+        startPairingBtn.isEnabled = true
+        startPairingBtn.setOnClickListener { finishWithResult(true) }
     }
 
     private fun finishWithResult(success: Boolean) {
-        Log.d(TAG, "finishWithResult called with success: $success")
-        try { activator?.stop(); activator?.onDestroy() } catch (_: Exception) {}
-        setResult(if (success) RESULT_OK else RESULT_CANCELED); finish()
+        try {
+            activator?.stop()
+            activator?.onDestroy()
+        } catch (_: Exception) {}
+        setResult(if (success) RESULT_OK else RESULT_CANCELED)
+        finish()
     }
 
     private fun label(text: String) = TextView(this).apply {
-        this.text = text; setTextColor(Color.parseColor("#CCCCEE")); textSize = 13f; setPadding(0, 0, 0, 6)
+        this.text = text
+        setTextColor(Color.parseColor("#94A3B8"))
+        textSize = 12f
+        setPadding(0, 0, 0, 6)
     }
 
     private fun spacer(dp: Int) = View(this).apply {
-        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (dp * resources.displayMetrics.density).toInt())
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == PERM_REQUEST_CODE) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                fetchAndSetSsid()
-            } else {
-                setStatus("? Location permission required to auto-detect Wi-Fi SSID.", Color.YELLOW)
-            }
-        }
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            (dp * resources.displayMetrics.density).toInt()
+        )
     }
 }

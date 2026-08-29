@@ -1,10 +1,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+  <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/>
   <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
   <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
+  <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
   <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
   <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+  <uses-permission android:name="android.permission.BLUETOOTH"/>
+  <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"/>
+  <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" tools:targetApi="s"/>
+  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" tools:targetApi="s"/>
+  <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" tools:targetApi="s"/>
+  <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" tools:targetApi="tiramisu"/>
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" tools:replace="android:maxSdkVersion"/>
   <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
   <uses-permission android:name="android.permission.VIBRATE"/>
@@ -16,12 +24,20 @@
       <data android:scheme="https"/>
     </intent>
   </queries>
-  <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="true" android:theme="@style/AppTheme" android:supportsRtl="true" android:enableOnBackInvokedCallback="false" tools:replace="android:allowBackup,android:supportsRtl">
-    <!-- Tuya SDK App Credentials -->
-    <meta-data android:name="THING_SMART_APPKEY" android:value="33vtgndn3d4vptmwhg3s"/>
-    <meta-data android:name="THING_SMART_SECRET" android:value="k9xuvk3a4jryygp8yrxev8vg4f4v9wce"/>
-    <meta-data android:name="TUYA_SMART_APPKEY" android:value="33vtgndn3d4vptmwhg3s"/>
-    <meta-data android:name="TUYA_SMART_SECRET" android:value="k9xuvk3a4jryygp8yrxev8vg4f4v9wce"/>
+  <application tools:replace="android:allowBackup,android:supportsRtl" android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="true" android:theme="@style/AppTheme" android:supportsRtl="true" android:enableOnBackInvokedCallback="false">
+    <!-- Tuya/Thing SDK Credentials -->
+    <meta-data
+      android:name="THING_SMART_APPKEY"
+      android:value="${TUYA_APP_KEY}" />
+    <meta-data
+      android:name="THING_SMART_SECRET"
+      android:value="${TUYA_APP_SECRET}" />
+    <meta-data
+      android:name="TUYA_SMART_APPKEY"
+      android:value="${TUYA_APP_KEY}" />
+    <meta-data
+      android:name="TUYA_SMART_SECRET"
+      android:value="${TUYA_APP_SECRET}" />
 
     <meta-data android:name="expo.modules.updates.ENABLED" android:value="false"/>
     <meta-data android:name="expo.modules.updates.ENABLE_BSDIFF_PATCH_SUPPORT" android:value="true"/>

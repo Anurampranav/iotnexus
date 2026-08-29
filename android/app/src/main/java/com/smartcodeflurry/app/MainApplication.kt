@@ -35,7 +35,7 @@ class MainApplication : Application(), ReactApplication {
 
     // Explicitly initialize ThingHomeSdk at application startup
     try {
-      ThingHomeSdk.init(this, "33vtgndn3d4vptmwhg3s", "k9xuvk3a4jryygp8yrxev8vg4f4v9wce")
+      ThingHomeSdk.init(this, BuildConfig.TUYA_APP_KEY, BuildConfig.TUYA_APP_SECRET)
       ThingHomeSdk.setDebugMode(BuildConfig.DEBUG)
       Log.d("MainApplication", "ThingHomeSdk initialized in Application.onCreate")
     } catch (e: Exception) {

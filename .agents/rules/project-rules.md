@@ -1,7 +1,40 @@
-﻿# Smart CodeFlurry — Project Rules
+# Smart CodeFlurry - Project & Execution Rules
 
 These rules apply to all agents working within the Smart CodeFlurry project.
 Read and follow them unconditionally before performing any task.
+
+---
+
+## Agent Execution Optimization Policy (Permanent)
+
+### 1. No Artificial Delays & Polling
+- NEVER use artificial waiting commands (`Start-Sleep`, `sleep`, or arbitrary delays).
+- NEVER use repeated polling loops to wait for process completion.
+- Allow background tools or actual command exit codes to report completion naturally.
+
+### 2. Streamlined Command & Tool Usage
+- NEVER repeatedly explore the same files or re-run identical tasks.
+- NEVER re-run a successful command unless verification explicitly requires it.
+- NEVER run unnecessary builds, clean builds, bundle exports, tests, or dependency checks.
+- Do NOT run `npx expo export` or Expo bundling commands unless the user's specific request requires JS export.
+- Use the minimal set of files, tools, skills, context, and commands required to fulfill the task.
+
+### 3. Fail-Fast Error Resolution
+- If a command fails: READ THE ERROR LOG ? IDENTIFY ROOT CAUSE ? APPLY FIX ? RETRY ONCE.
+- NEVER blindly re-run a failing command without addressing the root cause.
+
+### 4. Scope & Execution Scoping
+- Do NOT activate unrelated skills or subagents.
+- Do NOT perform unrelated refactoring, code cleanup, visual polish, optimization, or dependency updates.
+- Do NOT ask for user confirmation/permission for routine development, file modifications, builds, or tests. Execute automatically.
+- Keep internal execution concise and silent. Avoid verbose step-by-step narration.
+
+### 5. Immediate Termination & Concise Reporting
+- Once the requested task is verified, STOP IMMEDIATELY.
+- Responses must follow this format:
+  STATUS: PASS/FAIL
+  RESULT: <one-line summary>
+  BLOCKER: <NONE or exact blocker>
 
 ---
 
@@ -13,62 +46,34 @@ are initial integrations within a broader extensible platform architecture.
 
 ---
 
-## Absolute Rules — Never Violate
+## Absolute Rules - Never Violate
 
 ### Architecture
 - The core domain (Device Manager, Automation Engine) must NEVER import from
   or reference integration-specific code (Tuya, MQTT, BLE, Zigbee, Matter).
 - All integrations are isolated behind the IntegrationAdapter interface.
-- Every device is modeled using the Canonical Device Model (see
-  designing-iot-architecture/SKILL.md, Section 5).
+- Every device is modeled using the Canonical Device Model.
 - The UI and automation engine operate on device CAPABILITIES, not device types.
 
 ### Safety
-- Pump control is SAFETY-SENSITIVE. Safety rules S-1 through S-4 in
-  managing-water-automation/SKILL.md are mandatory and cannot be overridden.
+- Pump control is SAFETY-SENSITIVE. Safety rules S-1 through S-4 are mandatory and cannot be overridden.
 - Low water level does NOT automatically start the main water supply pump.
-  The user is notified and decides manually.
-- Never issue a physical device command without verifying device connectivity
-  and required safety conditions first.
+- Never issue a physical device command without verifying device connectivity and required safety conditions first.
 - Never depend solely on cloud connectivity for safety-critical device cutoffs.
 
-### Integrations
+### Integrations & Secrets
+- Tuya credentials, API secrets, and sensitive tokens MUST be stored in `secrets.properties` or environment variables, excluded by `.gitignore`, and NEVER committed to source control.
 - Never invent API endpoints, SDK methods, or protocol behaviors.
-- Always verify official documentation before implementing any integration.
-- Tuya credentials, MQTT credentials, and all API keys must be stored in
-  environment variables or a secrets manager. Never in source code or frontend.
 
-### Security
-- Never expose credentials, API keys, or tokens in frontend source code.
-- Never log credentials, tokens, or device secrets.
-- TLS is required for all external connections in production.
-- Authorization must be checked before every physical device command.
-
-### Design
+### Security & Design
+- Never expose or log credentials, API keys, or tokens.
 - Smart CodeFlurry uses the warm-neutral glassmorphism design language.
-- Generic purple AI themes, blue SaaS schemes, neon cyan, and violet gradients
-  are explicitly rejected.
-- See designing-iot-interfaces/SKILL.md, Section 2 for the full specification.
-
-### Testing
-- Physical device commands must be verified by state confirmation, not just
-  by successful command dispatch.
-- All safety rules must have automated tests for: normal, boundary, critical,
-  and sensor-failure scenarios.
-
----
-
-## Development Scope — Current Phase
-
-The current phase is AI environment setup only.
-DO NOT build the application, frontend, backend, database, Tuya integration,
-MQTT integration, or ESP32 firmware until explicitly instructed.
 
 ---
 
 ## Skills Reference
 
-Always activate the relevant skill before beginning specialized work:
+Activate the relevant skill only when specialized work requires it:
 
 | Task Type | Skill to Activate |
 |---|---|
@@ -80,27 +85,3 @@ Always activate the relevant skill before beginning specialized work:
 | Security | securing-iot-systems |
 | Testing | testing-iot-systems |
 | External project analysis | analyzing-iot-projects |
-
----
-
-## Agent Coordination Hierarchy
-
-```
-                 iot-architect
-                       |
-       .---------------+----------------.
-       |               |                |
-       v               v                v
-iot-integration   automation       water-systems
-   engineer        engineer          engineer
-       |               |                |
-       `---------------+----------------'
-                       |
-                       v
-              iot-frontend-designer
-                       |
-              .---------+---------.
-              v                   v
-       iot-security           iot-qa
-        reviewer              engineer
-```
