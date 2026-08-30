@@ -1,14 +1,13 @@
-import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
 import { useDeviceStore } from '@store/deviceStore';
-import { GlassCard } from '@components/glass/GlassCard';
-import { GlassToggle } from '@components/glass/GlassToggle';
-import { StatusBadge } from '@components/shared/StatusBadge';
 import { Colors, Typography, Spacing, Radius } from '@design/tokens';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 
 export default function WaterManagementScreen() {
+  const router = useRouter();
   const { devices, loadDevices, sendCommand, isLoading } = useDeviceStore();
 
   useEffect(() => {
@@ -23,18 +22,18 @@ export default function WaterManagementScreen() {
   const borewellPump = findDevice('dev-borewell-pump');
   const irrigationPump = findDevice('dev-irrigation-pump');
 
-  const tankLevel = tankSensor?.state['level']?.value as number ?? 0;
-  const sumpLevel = sumpSensor?.state['level']?.value as number ?? 0;
+  const tankLevel = (tankSensor?.state['level']?.value as number) ?? 18;
+  const sumpLevel = (sumpSensor?.state['level']?.value as number) ?? 65;
 
   const isBorewellOn = borewellPump?.state['power']?.value === true;
   const isTankPumpOn = tankPump?.state['power']?.value === true;
   const isIrrigationOn = irrigationPump?.state['power']?.value === true;
 
+  const [systemStatusFilter, setSystemStatusFilter] = useState<'normal' | 'low' | 'critical'>('low');
+
   const togglePump = async (deviceId: string, currentVal: boolean) => {
     await sendCommand(deviceId, 'power', !currentVal);
   };
-
-  const [systemStatusFilter, setSystemStatusFilter] = React.useState<'normal' | 'low' | 'critical'>('low');
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -75,10 +74,10 @@ export default function WaterManagementScreen() {
 
             <View style={styles.tankNodeCard}>
               <View style={styles.tankLevelVisual}>
-                <View style={[styles.tankLiquidFill, { height: '18%' }]} />
+                <View style={[styles.tankLiquidFill, { height: `${tankLevel}%` }]} />
               </View>
               <Text style={styles.nodeTitle}>Tank</Text>
-              <Text style={[styles.nodeValue, { color: Colors.primary }]}>18%</Text>
+              <Text style={[styles.nodeValue, { color: Colors.primary }]}>{tankLevel}%</Text>
               <Text style={styles.nodeTag}>Low</Text>
             </View>
           </View>
@@ -90,7 +89,7 @@ export default function WaterManagementScreen() {
                 <MaterialCommunityIcons name="waves" size={22} color={Colors.info} />
               </View>
               <Text style={styles.nodeTitle}>Sump</Text>
-              <Text style={styles.nodeValue}>65%</Text>
+              <Text style={styles.nodeValue}>{sumpLevel}%</Text>
             </View>
 
             <View style={styles.diagramNodeCard}>
@@ -98,7 +97,9 @@ export default function WaterManagementScreen() {
                 <MaterialCommunityIcons name="pump" size={22} color={Colors.primary} />
               </View>
               <Text style={styles.nodeTitle}>Tank Pump</Text>
-              <Text style={[styles.nodeTag, { color: Colors.success }]}>● ON</Text>
+              <Text style={[styles.nodeTag, { color: isTankPumpOn ? Colors.success : Colors.textMuted }]}>
+                {isTankPumpOn ? '● ON' : '● OFF'}
+              </Text>
             </View>
 
             <View style={styles.diagramNodeCard}>
@@ -107,7 +108,9 @@ export default function WaterManagementScreen() {
               </View>
               <Text style={styles.nodeTitle}>Irrigation</Text>
               <Text style={styles.nodeSub}>Pump</Text>
-              <Text style={[styles.nodeTag, { color: Colors.textMuted }]}>● OFF</Text>
+              <Text style={[styles.nodeTag, { color: isIrrigationOn ? Colors.success : Colors.textMuted }]}>
+                {isIrrigationOn ? '● ON' : '● OFF'}
+              </Text>
             </View>
           </View>
         </View>
@@ -170,40 +173,6 @@ export default function WaterManagementScreen() {
         </View>
 
         <View style={{ height: 120 }} />
-      </ScrollView>
-    </SafeAreaView>
-  );
-              </View>
-            </View>
-            <View style={styles.levelWrap}>
-              <Text style={styles.levelPercent}>{tankLevel}%</Text>
-              <StatusBadge status="low" label="LOW" />
-            </View>
-          </View>
-
-          <View style={styles.flowLine} />
-
-          {/* Node 6: Irrigation */}
-          <View style={styles.flowNode}>
-            <View style={styles.nodeLeft}>
-              <View style={[styles.iconCircle, isIrrigationOn && styles.iconCircleActive]}>
-                <MaterialCommunityIcons name="sprinkler-variant" size={20} color={isIrrigationOn ? Colors.primary : Colors.textSecondary} />
-              </View>
-              <View>
-                <Text style={styles.nodeName}>Garden Irrigation</Text>
-                <Text style={styles.nodeState}>{isIrrigationOn ? 'Irrigating Garden' : 'Idle'}</Text>
-              </View>
-            </View>
-            <GlassToggle
-              value={isIrrigationOn}
-              onValueChange={() => togglePump('dev-irrigation-pump', isIrrigationOn)}
-              status={irrigationPump?.state['power']?.commandStatus as any}
-            />
-          </View>
-        </GlassCard>
-
-        {/* Padding for tab bar */}
-        <View style={{ height: 100 }} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -401,14 +370,5 @@ const styles = StyleSheet.create({
     fontSize: Typography.fontSize.xs,
     color: Colors.textSecondary,
     marginTop: 2,
-  },
-  levelWrap: {
-    alignItems: 'flex-end',
-    gap: 4,
-  },
-  levelPercent: {
-    fontFamily: Typography.fontFamily.bold,
-    fontSize: Typography.fontSize.md,
-    color: Colors.textPrimary,
   },
 });
