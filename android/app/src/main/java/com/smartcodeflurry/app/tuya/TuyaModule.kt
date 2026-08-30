@@ -185,61 +185,33 @@ class TuyaModule(private val reactContext: ReactApplicationContext) : ReactConte
 
     private fun launchBizBundlePairing(activity: android.app.Activity?, homeId: Long, promise: Promise) {
         try {
-            if (activity != null) {
-                // Official Tuya Smart Life Add Device Auto-Scan / Category Discovery UI
-                com.thingclips.smart.activator.ui.kit.route.RouterOperator.INSTANCE.openHomePage(activity)
-                
-                val response = Arguments.createMap().apply {
-                    putBoolean("started", true)
-                    putString("mode", "TUYA_BIZBUNDLE")
-                    putString("status", "SMART_LIFE_UI_LAUNCHED")
+            val intent = if (activity != null) {
+                Intent(activity, TuyaPairingActivity::class.java)
+            } else {
+                Intent(reactApplicationContext, TuyaPairingActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-                promise.resolve(response)
-                Log.d(TAG, "Official Tuya Device Activator BizBundle UI launched successfully")
-                return
             }
-        } catch (e: Throwable) {
-            Log.w(TAG, "BizBundle RouterOperator launch notice: ${e.message}")
-        }
-
-        // Fallback router path "category" or native activator activity
-        try {
+            if (homeId != 0L) {
+                intent.putExtra("homeId", homeId)
+            }
+            
             if (activity != null) {
-                val urlBuilder = com.thingclips.smart.api.router.UrlBuilder(activity, "category")
-                urlBuilder.setRequestCode(1001)
-                com.thingclips.smart.api.router.UrlRouter.execute(urlBuilder)
-                
-                val response = Arguments.createMap().apply {
-                    putBoolean("started", true)
-                    putString("mode", "TUYA_ROUTER_CATEGORY")
-                    putString("status", "SMART_LIFE_UI_LAUNCHED")
-                }
-                promise.resolve(response)
-                return
+                activity.startActivity(intent)
+            } else {
+                reactApplicationContext.startActivity(intent)
             }
+            
+            val response = Arguments.createMap().apply {
+                putBoolean("started", true)
+                putString("mode", "NATIVE_ACTIVATOR")
+                putString("status", "PAIRING_LAUNCHED")
+            }
+            promise.resolve(response)
+            Log.d(TAG, "TuyaPairingActivity launched successfully")
         } catch (e: Throwable) {
-            Log.w(TAG, "Category router launch notice: ${e.message}")
+            Log.e(TAG, "Failed to launch TuyaPairingActivity", e)
+            promise.reject("LAUNCH_ERROR", "Failed to launch pairing activity: ${e.message}")
         }
-
-        val intent = if (activity != null) {
-            Intent(activity, TuyaPairingActivity::class.java)
-        } else {
-            Intent(reactApplicationContext, TuyaPairingActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-        }
-        
-        if (activity != null) {
-            activity.startActivity(intent)
-        } else {
-            reactApplicationContext.startActivity(intent)
-        }
-        
-        val response = Arguments.createMap().apply {
-            putBoolean("started", true)
-            putString("mode", "NATIVE_ACTIVATOR")
-            putString("status", "PAIRING_LAUNCHED")
-        }
-        promise.resolve(response)
     }
 }

@@ -1,4 +1,4 @@
-﻿# Smart CodeFlurry — .agents Directory
+# Smart CodeFlurry — .agents Directory
 
 This directory contains the reusable Antigravity Skills and Agents for the
 Smart CodeFlurry IoT platform project.
@@ -111,5 +111,5 @@ for the full set.
 
 ## Current Project Phase
 
-AI development environment setup only.
-The application has not been built yet. Do not build it until instructed.
+Implementation and verification.
+The application, Android native layer, and Tuya integration are under active development.
