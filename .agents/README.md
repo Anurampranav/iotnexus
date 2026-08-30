@@ -1,7 +1,6 @@
-# Smart CodeFlurry — .agents Directory
+# Smart CodeFlurry � .agents Directory
 
-This directory contains the reusable Antigravity Skills and Agents for the
-Smart CodeFlurry IoT platform project.
+This directory contains the authoritative Antigravity Skills, Agents, and Rules for the Smart CodeFlurry IoT platform.
 
 ---
 
@@ -10,8 +9,10 @@ Smart CodeFlurry IoT platform project.
 ```
 .agents/
 +-- rules/
-|   `-- project-rules.md          <- Project-wide rules (always active)
+|   `-- project-rules.md          <- Project-wide rules & Build Execution Policy (always active)
 +-- skills/
+|   +-- smartcodeflurry/
+|   |   `-- SKILL.md              <- Authoritative development, diagnosis, and anti-loop skill
 |   +-- designing-iot-architecture/
 |   |   `-- SKILL.md              <- IoT system architecture skill
 |   +-- integrating-iot-devices/
@@ -44,6 +45,7 @@ Smart CodeFlurry IoT platform project.
 
 | Skill | Purpose |
 |---|---|
+| smartcodeflurry | Authoritative development, diagnosis, build policy, and Tuya integration |
 | designing-iot-architecture | System architecture, service boundaries, device abstraction |
 | integrating-iot-devices | Integration adapters: Tuya, MQTT, Matter, Zigbee, BLE, ESP32 |
 | engineering-automation-rules | Automation engine: triggers, conditions, actions, safety |
@@ -55,61 +57,13 @@ Smart CodeFlurry IoT platform project.
 
 ---
 
-## Agents
+## Important Rules Summary
 
-| Agent | Role |
-|---|---|
-| iot-architect | Platform architecture, technology decisions, ADRs |
-| iot-integration-engineer | Integration adapters, capability mapping |
-| automation-engineer | Rule engine, scheduling, conflict/loop detection |
-| water-systems-engineer | Water sensors, pump safety, irrigation automation |
-| iot-frontend-designer | Premium UI, design system, capability components |
-| iot-security-reviewer | Security reviews, credential audit, threat modeling |
-| iot-qa-engineer | Test strategy, device simulation, safety validation |
-
----
-
-## Agent Coordination
-
-```
-                 iot-architect
-                       |
-       .---------------+----------------.
-       |               |                |
-       v               v                v
-iot-integration   automation       water-systems
-   engineer        engineer          engineer
-       |               |                |
-       `---------------+----------------'
-                       |
-                       v
-              iot-frontend-designer
-                       |
-              .---------+---------.
-              v                   v
-       iot-security           iot-qa
-        reviewer              engineer
-```
-
----
-
-## Important Rules
-
-These rules apply to all agents in this project. See rules/project-rules.md
-for the full set.
-
-1. The core domain NEVER imports from integration adapters directly.
-2. All devices use the Canonical Device Model.
-3. Pump control is SAFETY-SENSITIVE. Safety rules S-1 to S-4 are mandatory.
-4. Low water level does NOT automatically start the pump.
-5. Never invent API endpoints or SDK behaviors.
-6. Credentials must never appear in source code or frontend bundles.
-7. TLS is mandatory for all production connections.
-8. Physical device commands require state confirmation — not just dispatch.
-
----
-
-## Current Project Phase
-
-Implementation and verification.
-The application, Android native layer, and Tuya integration are under active development.
+1. Always inspect CURRENT state first and diagnose before changing code.
+2. No execution loops, no timers, no background polling, and no automatic retry builds.
+3. At most ONE controlled build and ONE runtime verification per fix.
+4. Pump control is SAFETY-SENSITIVE. Safety rules S-1 to S-4 are mandatory.
+5. All devices use the Canonical Device Model.
+6. The core domain NEVER imports from integration adapters directly.
+7. Credentials must never appear in source code or frontend bundles. Keep AppSecret strictly private.
+8. When a requested task is complete, STOP immediately.

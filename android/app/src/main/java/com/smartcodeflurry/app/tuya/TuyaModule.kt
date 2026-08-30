@@ -116,30 +116,10 @@ class TuyaModule(private val reactContext: ReactApplicationContext) : ReactConte
 
         Handler(Looper.getMainLooper()).post {
             try {
-                if (!ensureSdkInitialized()) {
-                    promise.reject("PAIRING_ERROR", "Tuya SDK initialization failed. Cannot start pairing.")
-                    return@post
-                }
-
-                // Ensure user context is authenticated first
-                if (!ThingHomeSdk.getUserInstance().isLogin) {
-                    Log.d(TAG, "No logged-in Tuya user context found, registering/authenticating default user session")
-                    ThingHomeSdk.getUserInstance().loginOrRegisterWithUid("iotnexus_default_user", "91", "SmartCodeFlurry#2026", object : ILoginCallback {
-                        override fun onSuccess(user: User?) {
-                            Log.d(TAG, "Tuya user session established, proceeding to home resolution")
-                            resolveHomeAndLaunch(activity, promise)
-                        }
-                        override fun onError(code: String, error: String) {
-                            Log.w(TAG, "User registration/login callback notice ($code: $error), proceeding to home resolution")
-                            resolveHomeAndLaunch(activity, promise)
-                        }
-                    })
-                } else {
-                    resolveHomeAndLaunch(activity, promise)
-                }
+                launchBizBundlePairing(activity, 0L, promise)
             } catch (e: Throwable) {
-                Log.e(TAG, "Error initiating Tuya pairing flow", e)
-                promise.reject("PAIRING_ERROR", "Failed to launch pairing: ${e.message}", e)
+                Log.e(TAG, "Failed to launch device pairing", e)
+                promise.reject("PAIRING_ERROR", "Failed to launch pairing screen: ${e.message}", e)
             }
         }
     }

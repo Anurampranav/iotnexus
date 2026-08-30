@@ -102,6 +102,7 @@ Always activate the relevant skill before beginning specialized work:
 
 | Task Type | Skill to Activate |
 |---|---|
+| General development & build | smartcodeflurry |
 | Architecture design | designing-iot-architecture |
 | Integration development | integrating-iot-devices |
 | Automation engine | engineering-automation-rules |

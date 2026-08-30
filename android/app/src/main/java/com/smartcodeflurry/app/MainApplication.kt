@@ -2,7 +2,6 @@ package com.smartcodeflurry.app
 
 import android.app.Application
 import android.content.res.Configuration
-import android.util.Log
 
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
@@ -14,8 +13,6 @@ import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
 
 import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ExpoReactHostFactory
-
-import com.thingclips.smart.home.sdk.ThingHomeSdk
 
 class MainApplication : Application(), ReactApplication {
 
@@ -32,16 +29,6 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
-
-    // Explicitly initialize ThingHomeSdk at application startup
-    try {
-      ThingHomeSdk.init(this, BuildConfig.TUYA_APP_KEY, BuildConfig.TUYA_APP_SECRET)
-      ThingHomeSdk.setDebugMode(BuildConfig.DEBUG)
-      Log.d("MainApplication", "ThingHomeSdk initialized in Application.onCreate")
-    } catch (e: Exception) {
-      Log.e("MainApplication", "Failed to initialize ThingHomeSdk in Application.onCreate", e)
-    }
-
     DefaultNewArchitectureEntryPoint.releaseLevel = try {
       ReleaseLevel.valueOf(BuildConfig.REACT_NATIVE_RELEASE_LEVEL.uppercase())
     } catch (e: IllegalArgumentException) {
@@ -49,6 +36,15 @@ class MainApplication : Application(), ReactApplication {
     }
     loadReactNative(this)
     ApplicationLifecycleDispatcher.onApplicationCreate(this)
+
+    // Initialize Tuya ThingHomeSdk at application startup
+    try {
+      com.thingclips.smart.home.sdk.ThingHomeSdk.init(this, BuildConfig.TUYA_APP_KEY, BuildConfig.TUYA_APP_SECRET)
+      com.thingclips.smart.home.sdk.ThingHomeSdk.setDebugMode(BuildConfig.DEBUG)
+      android.util.Log.d("MainApplication", "ThingHomeSdk successfully initialized in Application.onCreate")
+    } catch (e: Throwable) {
+      android.util.Log.e("MainApplication", "Failed to initialize ThingHomeSdk in Application.onCreate", e)
+    }
   }
 
   override fun onConfigurationChanged(newConfig: Configuration) {
