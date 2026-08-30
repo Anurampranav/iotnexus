@@ -58,49 +58,73 @@ export default function HomeDashboardScreen() {
       >
         {/* Header Block */}
         <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.avatarContainer}
-            onPress={() => router.push('/(tabs)/more')}
-            activeOpacity={0.8}
-          >
-            <MaterialCommunityIcons name="account-circle-outline" size={28} color={Colors.primary} />
-          </TouchableOpacity>
-          <View style={styles.headerLeft}>
-            <Text style={styles.greeting}>Hi, {userName}</Text>
-            <Text style={styles.statusText}>Everything looks good.</Text>
+          <View style={styles.headerProfileRow}>
+            <View style={styles.avatarWrapper}>
+              <View style={styles.avatarCircle}>
+                <MaterialCommunityIcons name="account" size={24} color={Colors.primary} />
+              </View>
+              <View style={styles.onlineBadge} />
+            </View>
+            <View style={styles.headerTextGroup}>
+              <Text style={styles.greeting}>Hi, {userName || 'Nicole'}</Text>
+              <Text style={styles.statusText}>Good morning! Everything looks good.</Text>
+            </View>
+            <TouchableOpacity style={styles.headerActionBtn}>
+              <MaterialCommunityIcons name="dots-vertical" size={22} color={Colors.textSecondary} />
+            </TouchableOpacity>
           </View>
         </View>
 
         {/* Stats Row */}
         <View style={styles.statsRow}>
-          <MetricCard value={devices.length} label="All Devices" />
-          <MetricCard value={onlineCount} label="Online" />
-          <MetricCard value={offlineCount} label="Offline" />
-          <MetricCard value={automations.length} label="Automations" />
+          <View style={styles.statCard}>
+            <Text style={styles.statNumber}>{devices.length}</Text>
+            <Text style={styles.statLabel}>All Devices</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={[styles.statNumber, { color: Colors.success }]}>{onlineCount}</Text>
+            <Text style={styles.statLabel}>Online</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={[styles.statNumber, { color: Colors.textMuted }]}>{offlineCount}</Text>
+            <Text style={styles.statLabel}>Offline</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={[styles.statNumber, { color: Colors.primary }]}>{automations.length}</Text>
+            <Text style={styles.statLabel}>Automations</Text>
+          </View>
         </View>
 
-        {/* Favorite Devices */}
+        {/* Favorite Devices Section */}
         <View style={styles.section}>
-          <SectionHeader
-            title="Favorite Devices"
-            onPressAction={() => router.push('/devices')}
-          />
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Favorite Devices</Text>
+            <TouchableOpacity onPress={() => router.push('/devices')}>
+              <Text style={styles.seeAllText}>See all ›</Text>
+            </TouchableOpacity>
+          </View>
           {favorites.length === 0 ? (
-            <Text style={styles.emptyText}>No favorite devices selected.</Text>
+            <View style={styles.emptyCard}>
+              <MaterialCommunityIcons name="devices" size={36} color={Colors.textMuted} />
+              <Text style={styles.emptyTitle}>No devices paired yet</Text>
+              <Text style={styles.emptySubtitle}>Tap Add Device in the Devices tab to connect your Tuya smart devices.</Text>
+            </View>
           ) : (
-            favorites.map(device => (
-              <DeviceCard
-                key={device.id}
-                device={device}
-                onPress={() => handleDevicePress(device.id)}
-              />
-            ))
+            <View style={styles.favoritesGrid}>
+              {favorites.map(device => (
+                <DeviceCard
+                  key={device.id}
+                  device={device}
+                  onPress={() => handleDevicePress(device.id)}
+                />
+              ))}
+            </View>
           )}
         </View>
 
-        {/* Recent Activity */}
+        {/* Recent Activity Section */}
         <View style={styles.section}>
-          <SectionHeader title="Recent Activity" />
+          <Text style={styles.sectionTitle}>Recent Activity</Text>
           {notifications.slice(0, 3).map(notif => (
             <View key={notif.id} style={styles.activityItem}>
               <View style={[styles.activityDot, { backgroundColor: notif.severity === 'critical' ? Colors.error : notif.severity === 'warning' ? Colors.warning : Colors.success }]} />
@@ -123,79 +147,150 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: Spacing.base,
-    paddingTop: Spacing.xs,
     paddingBottom: 120,
   },
   header: {
+    paddingVertical: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  headerProfileRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: Spacing.sm,
-    marginBottom: Spacing.md,
-    gap: Spacing.md,
   },
-  headerLeft: {
-    flex: 1,
+  avatarWrapper: {
+    position: 'relative',
+    marginRight: Spacing.md,
   },
-  greeting: {
-    fontFamily: Typography.fontFamily.bold,
-    fontSize: Typography.fontSize.xl,
-    color: Colors.textPrimary,
-  },
-  statusText: {
-    fontFamily: Typography.fontFamily.medium,
-    fontSize: Typography.fontSize.sm,
-    color: Colors.textSecondary,
-    marginTop: 2,
-  },
-  avatarContainer: {
+  avatarCircle: {
     width: 44,
     height: 44,
     borderRadius: Radius.full,
     backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.glassBorder,
+    borderWidth: 1.5,
+    borderColor: Colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    flexShrink: 0,
+  },
+  onlineBadge: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 10,
+    height: 10,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.success,
+    borderWidth: 1.5,
+    borderColor: Colors.background,
+  },
+  headerTextGroup: {
+    flex: 1,
+  },
+  greeting: {
+    fontFamily: Typography.fontFamily.bold,
+    fontSize: Typography.fontSize.lg,
+    color: Colors.textPrimary,
+  },
+  statusText: {
+    fontFamily: Typography.fontFamily.regular,
+    fontSize: Typography.fontSize.sm,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  headerActionBtn: {
+    padding: Spacing.xs,
   },
   statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: Spacing.sm,
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.xl,
+    gap: Spacing.xs,
+  },
+  statCard: {
+    flex: 1,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    paddingVertical: Spacing.md,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  statNumber: {
+    fontFamily: Typography.fontFamily.bold,
+    fontSize: Typography.fontSize.lg,
+    color: Colors.textPrimary,
+  },
+  statLabel: {
+    fontFamily: Typography.fontFamily.medium,
+    fontSize: 10,
+    color: Colors.textSecondary,
+    marginTop: 2,
   },
   section: {
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.xl,
   },
-  emptyText: {
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+  },
+  sectionTitle: {
+    fontFamily: Typography.fontFamily.bold,
+    fontSize: Typography.fontSize.md,
+    color: Colors.textPrimary,
+  },
+  seeAllText: {
+    fontFamily: Typography.fontFamily.medium,
+    fontSize: Typography.fontSize.sm,
+    color: Colors.primary,
+  },
+  favoritesGrid: {
+    gap: Spacing.sm,
+  },
+  emptyCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.xl,
+    padding: Spacing.xl,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginTop: Spacing.xs,
+  },
+  emptyTitle: {
+    fontFamily: Typography.fontFamily.bold,
+    fontSize: Typography.fontSize.base,
+    color: Colors.textPrimary,
+    marginTop: Spacing.md,
+  },
+  emptySubtitle: {
     fontFamily: Typography.fontFamily.regular,
     fontSize: Typography.fontSize.sm,
-    color: Colors.textMuted,
+    color: Colors.textSecondary,
     textAlign: 'center',
-    paddingVertical: Spacing.xl,
+    marginTop: Spacing.xs,
+    lineHeight: 20,
   },
   activityItem: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: Colors.glass,
-    borderWidth: 1,
-    borderColor: Colors.glassBorder,
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
     borderRadius: Radius.md,
     padding: Spacing.md,
     marginBottom: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   activityDot: {
     width: 8,
     height: 8,
-    borderRadius: 4,
+    borderRadius: Radius.full,
     marginRight: Spacing.md,
-    marginTop: 5,
   },
   activityContent: {
     flex: 1,
   },
   activityTitle: {
-    fontFamily: Typography.fontFamily.semiBold,
+    fontFamily: Typography.fontFamily.medium,
     fontSize: Typography.fontSize.sm,
     color: Colors.textPrimary,
   },

@@ -70,8 +70,15 @@ export default function DevicesScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      {/* Header matching chart */}
       <View style={styles.header}>
+        <TouchableOpacity style={styles.headerIconBtn}>
+          <MaterialCommunityIcons name="menu" size={24} color={Colors.textPrimary} />
+        </TouchableOpacity>
         <Text style={styles.title}>Devices</Text>
+        <TouchableOpacity style={styles.headerIconBtn}>
+          <MaterialCommunityIcons name="dots-vertical" size={22} color={Colors.textSecondary} />
+        </TouchableOpacity>
       </View>
 
       {/* Search Input */}
@@ -117,23 +124,25 @@ export default function DevicesScreen() {
         )}
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
-          <EmptyState
-            title="No devices found"
-            description="Try modifying your search or filter options"
-          />
+          <View style={styles.emptyContainer}>
+            <MaterialCommunityIcons name="devices" size={48} color={Colors.textMuted} />
+            <Text style={styles.emptyTitle}>No Devices Connected</Text>
+            <Text style={styles.emptyDesc}>Tap + Add Device below to discover and pair your Tuya smart devices.</Text>
+          </View>
         }
         refreshing={isLoading}
         onRefresh={loadDevices}
       />
 
-      {/* Floating Add Device button */}
+      {/* Floating Add Device button matching chart */}
       <View style={styles.fabContainer}>
-        <GlassButton
-          label="+ ADD DEVICE"
+        <TouchableOpacity
+          style={styles.addDeviceButton}
           onPress={handleAddDevice}
-          variant="primary"
-          style={styles.fab}
-        />
+          activeOpacity={0.85}
+        >
+          <Text style={styles.addDeviceButtonText}>+ Add Device</Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -145,8 +154,14 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: Spacing.base,
     paddingVertical: Spacing.md,
+  },
+  headerIconBtn: {
+    padding: Spacing.xs,
   },
   title: {
     fontFamily: Typography.fontFamily.bold,
@@ -171,19 +186,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   chipActive: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primaryLight,
+    backgroundColor: Colors.surface,
+    borderColor: Colors.primary,
   },
   chipInactive: {
-    backgroundColor: Colors.glassMedium,
-    borderColor: Colors.glassBorder,
+    backgroundColor: Colors.surface,
+    borderColor: Colors.border,
   },
   chipLabel: {
-    fontFamily: Typography.fontFamily.semiBold,
+    fontFamily: Typography.fontFamily.medium,
     fontSize: Typography.fontSize.sm,
   },
   chipLabelActive: {
-    color: Colors.textInverse,
+    color: Colors.primary,
+    fontFamily: Typography.fontFamily.bold,
   },
   chipLabelInactive: {
     color: Colors.textSecondary,
@@ -192,19 +208,42 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.base,
     paddingBottom: 160,
   },
+  emptyContainer: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.xl,
+    padding: Spacing['2xl'],
+    alignItems: 'center',
+    marginTop: Spacing.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  emptyTitle: {
+    fontFamily: Typography.fontFamily.bold,
+    fontSize: Typography.fontSize.base,
+    color: Colors.textPrimary,
+    marginTop: Spacing.md,
+  },
+  emptyDesc: {
+    fontFamily: Typography.fontFamily.regular,
+    fontSize: Typography.fontSize.sm,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginTop: Spacing.xs,
+    lineHeight: 20,
+  },
   fabContainer: {
     position: 'absolute',
-    bottom: 90,
+    bottom: 96,
     left: Spacing.base,
     right: Spacing.base,
-    alignItems: 'center',
   },
-  fab: {
-    width: '100%',
+  addDeviceButton: {
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.full,
+    paddingVertical: Spacing.base,
+    alignItems: 'center',
+    justifyContent: 'center',
     shadowColor: Colors.primary,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
   },
 });

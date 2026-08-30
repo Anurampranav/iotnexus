@@ -36,21 +36,47 @@ export default function AutomationsScreen() {
     setIsBuilderVisible(true);
   };
 
+  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'disabled'>('all');
+
+  const filteredAutomations = automations.filter(rule => {
+    if (activeFilter === 'active') return rule.enabled;
+    if (activeFilter === 'disabled') return !rule.enabled;
+    return true;
+  });
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      {/* Header */}
+      {/* Header matching chart */}
       <View style={styles.header}>
-        <Text style={styles.title}>Automations</Text>
-        <TouchableOpacity
-          style={styles.addButton}
-          onPress={() => {
-            setAutomationToEdit(null);
-            setIsBuilderVisible(true);
-          }}
-        >
-          <MaterialCommunityIcons name="plus" size={24} color={Colors.primary} />
-          <Text style={styles.addButtonText}>NEW</Text>
+        <View style={styles.headerLeftGroup}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <MaterialCommunityIcons name="chevron-left" size={28} color={Colors.textPrimary} />
+          </TouchableOpacity>
+          <Text style={styles.title}>Automations</Text>
+        </View>
+        <TouchableOpacity style={styles.headerActionBtn}>
+          <MaterialCommunityIcons name="dots-vertical" size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
+      </View>
+
+      {/* Segmented Filter Pills */}
+      <View style={styles.filterRow}>
+        {(['all', 'active', 'disabled'] as const).map(tab => {
+          const isSelected = activeFilter === tab;
+          const label = tab.charAt(0).toUpperCase() + tab.slice(1);
+          return (
+            <TouchableOpacity
+              key={tab}
+              style={[styles.filterTab, isSelected && styles.filterTabActive]}
+              onPress={() => setActiveFilter(tab)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.filterTabText, isSelected && styles.filterTabTextActive]}>
+                {label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       <ScrollView
@@ -63,27 +89,28 @@ export default function AutomationsScreen() {
           />
         }
       >
-        {automations.map(rule => (
+        {filteredAutomations.map(rule => (
           <GlassCard key={rule.id} style={styles.card}>
             <View style={styles.cardHeader}>
               <TouchableOpacity
                 style={styles.cardHeaderLeft}
                 onPress={() => handleCardPress(rule)}
               >
-                <MaterialCommunityIcons
-                  name={rule.enabled ? 'play-circle-outline' : 'pause-circle-outline'}
-                  size={24}
-                  color={rule.enabled ? Colors.primary : Colors.textMuted}
-                  style={styles.ruleIcon}
-                />
+                <View style={[styles.ruleIconWrap, rule.enabled && styles.ruleIconWrapActive]}>
+                  <MaterialCommunityIcons
+                    name={rule.enabled ? 'lightning-bolt' : 'lightning-bolt-outline'}
+                    size={22}
+                    color={rule.enabled ? Colors.primary : Colors.textMuted}
+                  />
+                </View>
                 <View style={styles.textContainer}>
                   <View style={styles.titleRow}>
                     <Text style={styles.ruleName}>{rule.name}</Text>
                     {rule.isSafety && (
                       <MaterialCommunityIcons
-                        name="shield-alert-outline"
+                        name="shield-check"
                         size={16}
-                        color={Colors.warning}
+                        color={Colors.primary}
                         style={styles.safetyIcon}
                       />
                     )}
@@ -91,6 +118,11 @@ export default function AutomationsScreen() {
                   <Text style={styles.ruleDescription} numberOfLines={2}>
                     {rule.description}
                   </Text>
+                  <View style={styles.badgeRow}>
+                    <Text style={[styles.statusTag, rule.enabled ? styles.statusTagActive : styles.statusTagDisabled]}>
+                      {rule.enabled ? 'Active' : 'Disabled'}
+                    </Text>
+                  </View>
                 </View>
               </TouchableOpacity>
 
@@ -99,29 +131,26 @@ export default function AutomationsScreen() {
                 onValueChange={() => toggleAutomation(rule.id)}
               />
             </View>
-
-            <View style={styles.divider} />
-
-            <TouchableOpacity
-              style={styles.detailsRow}
-              onPress={() => handleCardPress(rule)}
-            >
-              <StatusBadge
-                status={rule.enabled ? 'active' : 'disabled'}
-                label={rule.enabled ? 'Active' : 'Disabled'}
-              />
-              {rule.lastTriggered && (
-                <Text style={styles.triggeredText}>
-                  Last run: {new Date(rule.lastTriggered).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </Text>
-              )}
-            </TouchableOpacity>
           </GlassCard>
         ))}
 
-        {/* Padding for tab bar */}
-        <View style={{ height: 100 }} />
+        {/* Padding for tab bar & fab */}
+        <View style={{ height: 160 }} />
       </ScrollView>
+
+      {/* Floating New Automation Button */}
+      <View style={styles.fabContainer}>
+        <TouchableOpacity
+          style={styles.newAutomationBtn}
+          onPress={() => {
+            setAutomationToEdit(null);
+            setIsBuilderVisible(true);
+          }}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.newAutomationBtnText}>+ New Automation</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Details Sheets / Builder Sheets */}
       <AutomationDetailsModal
@@ -152,37 +181,60 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.base,
     paddingVertical: Spacing.md,
   },
+  headerLeftGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  backBtn: {
+    marginRight: Spacing.xs,
+    padding: Spacing.xs,
+  },
+  headerActionBtn: {
+    padding: Spacing.xs,
+  },
   title: {
     fontFamily: Typography.fontFamily.bold,
     fontSize: Typography.fontSize.xl,
     color: Colors.textPrimary,
   },
-  addButton: {
+  filterRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,138,80,0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,138,80,0.35)',
-    borderRadius: Radius.full,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 7,
-    gap: 4,
-    marginRight: 48,
+    paddingHorizontal: Spacing.base,
+    marginBottom: Spacing.md,
+    gap: Spacing.sm,
   },
-  addButtonText: {
-    fontFamily: Typography.fontFamily.bold,
-    fontSize: Typography.fontSize.xs,
+  filterTab: {
+    flex: 1,
+    backgroundColor: Colors.surface,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.full,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  filterTabActive: {
+    borderColor: Colors.primary,
+  },
+  filterTabText: {
+    fontFamily: Typography.fontFamily.medium,
+    fontSize: Typography.fontSize.sm,
+    color: Colors.textSecondary,
+  },
+  filterTabTextActive: {
     color: Colors.primary,
-    letterSpacing: 0.5,
+    fontFamily: Typography.fontFamily.bold,
   },
   scrollContent: {
     paddingHorizontal: Spacing.base,
     paddingTop: Spacing.xs,
-    paddingBottom: 120,
   },
   card: {
-    padding: Spacing.base,
     marginBottom: Spacing.md,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.base,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -193,10 +245,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
-    marginRight: Spacing.sm,
-  },
-  ruleIcon: {
     marginRight: Spacing.md,
+  },
+  ruleIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: Radius.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.md,
+  },
+  ruleIconWrapActive: {
+    backgroundColor: 'rgba(255, 138, 80, 0.12)',
   },
   textContainer: {
     flex: 1,
@@ -204,34 +265,57 @@ const styles = StyleSheet.create({
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 4,
   },
   ruleName: {
-    fontFamily: Typography.fontFamily.semiBold,
+    fontFamily: Typography.fontFamily.bold,
     fontSize: Typography.fontSize.base,
     color: Colors.textPrimary,
+    marginRight: Spacing.xs,
   },
   safetyIcon: {
     marginLeft: Spacing.xs,
   },
   ruleDescription: {
     fontFamily: Typography.fontFamily.regular,
-    fontSize: Typography.fontSize.xs,
+    fontSize: Typography.fontSize.sm,
     color: Colors.textSecondary,
-    marginTop: 2,
+    lineHeight: 18,
   },
-  divider: {
-    height: 1,
-    backgroundColor: Colors.separator,
-    marginVertical: Spacing.md,
+  badgeRow: {
+    marginTop: Spacing.xs,
   },
-  detailsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  triggeredText: {
+  statusTag: {
     fontFamily: Typography.fontFamily.medium,
-    fontSize: Typography.fontSize.xs,
+    fontSize: 11,
+  },
+  statusTagActive: {
+    color: Colors.success,
+  },
+  statusTagDisabled: {
     color: Colors.textMuted,
+  },
+  fabContainer: {
+    position: 'absolute',
+    bottom: 96,
+    left: Spacing.base,
+    right: Spacing.base,
+  },
+  newAutomationBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.full,
+    paddingVertical: Spacing.base,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  newAutomationBtnText: {
+    fontFamily: Typography.fontFamily.bold,
+    fontSize: Typography.fontSize.base,
+    color: Colors.textPrimary,
   },
 });

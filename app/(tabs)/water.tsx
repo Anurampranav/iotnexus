@@ -34,10 +34,21 @@ export default function WaterManagementScreen() {
     await sendCommand(deviceId, 'power', !currentVal);
   };
 
+  const [systemStatusFilter, setSystemStatusFilter] = React.useState<'normal' | 'low' | 'critical'>('low');
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      {/* Header matching chart */}
       <View style={styles.header}>
-        <Text style={styles.title}>Water Management</Text>
+        <View style={styles.headerLeftGroup}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <MaterialCommunityIcons name="chevron-left" size={28} color={Colors.textPrimary} />
+          </TouchableOpacity>
+          <Text style={styles.title}>Water Management</Text>
+        </View>
+        <TouchableOpacity style={styles.headerActionBtn}>
+          <MaterialCommunityIcons name="dots-vertical" size={22} color={Colors.textSecondary} />
+        </TouchableOpacity>
       </View>
 
       <ScrollView
@@ -50,94 +61,118 @@ export default function WaterManagementScreen() {
           />
         }
       >
-        {/* Schematic System Diagram */}
-        <GlassCard style={styles.schematicCard}>
-          <Text style={styles.sectionTitle}>System Flow</Text>
-
-          {/* Node 1: Borewell */}
-          <View style={styles.flowNode}>
-            <View style={styles.nodeLeft}>
-              <View style={styles.iconCircle}>
-                <MaterialCommunityIcons name="image-filter-hdr" size={20} color={Colors.textSecondary} />
+        {/* Schematic System Diagram matching chart */}
+        <View style={styles.diagramContainer}>
+          {/* Top Row: Borewell & Tank */}
+          <View style={styles.diagramTopRow}>
+            <View style={styles.diagramNodeCard}>
+              <View style={styles.nodeIconCircle}>
+                <MaterialCommunityIcons name="pump" size={22} color={Colors.textPrimary} />
               </View>
-              <View>
-                <Text style={styles.nodeName}>Borewell Water Source</Text>
-                <Text style={styles.nodeState}>Active availability</Text>
-              </View>
+              <Text style={styles.nodeTitle}>Borewell</Text>
+              <Text style={styles.nodeSub}>Pump</Text>
             </View>
-            <StatusBadge status="normal" label="Source OK" />
-          </View>
 
-          <View style={styles.flowLine} />
-
-          {/* Node 2: Borewell Pump */}
-          <View style={styles.flowNode}>
-            <View style={styles.nodeLeft}>
-              <View style={[styles.iconCircle, isBorewellOn && styles.iconCircleActive]}>
-                <MaterialCommunityIcons name="pump" size={20} color={isBorewellOn ? Colors.primary : Colors.textSecondary} />
+            <View style={styles.tankNodeCard}>
+              <View style={styles.tankLevelVisual}>
+                <View style={[styles.tankLiquidFill, { height: '18%' }]} />
               </View>
-              <View>
-                <Text style={styles.nodeName}>Borewell Pump</Text>
-                <Text style={styles.nodeState}>{isBorewellOn ? 'Pumping to Sump' : 'Stopped'}</Text>
-              </View>
-            </View>
-            <GlassToggle
-              value={isBorewellOn}
-              onValueChange={() => togglePump('dev-borewell-pump', isBorewellOn)}
-              status={borewellPump?.state['power']?.commandStatus as any}
-            />
-          </View>
-
-          <View style={styles.flowLine} />
-
-          {/* Node 3: Sump */}
-          <View style={styles.flowNode}>
-            <View style={styles.nodeLeft}>
-              <View style={styles.iconCircle}>
-                <MaterialCommunityIcons name="pool" size={20} color={Colors.info} />
-              </View>
-              <View>
-                <Text style={styles.nodeName}>Underground Sump</Text>
-                <Text style={styles.nodeState}>Storage reserve</Text>
-              </View>
-            </View>
-            <View style={styles.levelWrap}>
-              <Text style={styles.levelPercent}>{sumpLevel}%</Text>
-              <StatusBadge status="normal" label="Normal" />
+              <Text style={styles.nodeTitle}>Tank</Text>
+              <Text style={[styles.nodeValue, { color: Colors.primary }]}>18%</Text>
+              <Text style={styles.nodeTag}>Low</Text>
             </View>
           </View>
 
-          <View style={styles.flowLine} />
-
-          {/* Node 4: Tank Pump */}
-          <View style={styles.flowNode}>
-            <View style={styles.nodeLeft}>
-              <View style={[styles.iconCircle, isTankPumpOn && styles.iconCircleActive]}>
-                <MaterialCommunityIcons name="pump" size={20} color={isTankPumpOn ? Colors.primary : Colors.textSecondary} />
+          {/* Bottom Row: Sump, Tank Pump, Irrigation Pump */}
+          <View style={styles.diagramBottomRow}>
+            <View style={styles.diagramNodeCard}>
+              <View style={styles.nodeIconCircle}>
+                <MaterialCommunityIcons name="waves" size={22} color={Colors.info} />
               </View>
-              <View>
-                <Text style={styles.nodeName}>Tank Lift Pump</Text>
-                <Text style={styles.nodeState}>{isTankPumpOn ? 'Lifting to Tank' : 'Stopped'}</Text>
+              <Text style={styles.nodeTitle}>Sump</Text>
+              <Text style={styles.nodeValue}>65%</Text>
+            </View>
+
+            <View style={styles.diagramNodeCard}>
+              <View style={[styles.nodeIconCircle, styles.nodeIconCircleActive]}>
+                <MaterialCommunityIcons name="pump" size={22} color={Colors.primary} />
+              </View>
+              <Text style={styles.nodeTitle}>Tank Pump</Text>
+              <Text style={[styles.nodeTag, { color: Colors.success }]}>● ON</Text>
+            </View>
+
+            <View style={styles.diagramNodeCard}>
+              <View style={styles.nodeIconCircle}>
+                <MaterialCommunityIcons name="sprinkler" size={22} color={Colors.textMuted} />
+              </View>
+              <Text style={styles.nodeTitle}>Irrigation</Text>
+              <Text style={styles.nodeSub}>Pump</Text>
+              <Text style={[styles.nodeTag, { color: Colors.textMuted }]}>● OFF</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* System Status Row matching chart */}
+        <View style={styles.sectionBlock}>
+          <Text style={styles.sectionHeaderTitle}>System Status</Text>
+          <View style={styles.statusPillsRow}>
+            {(['normal', 'low', 'critical'] as const).map(st => {
+              const isSelected = systemStatusFilter === st;
+              const label = st.charAt(0).toUpperCase() + st.slice(1);
+              return (
+                <TouchableOpacity
+                  key={st}
+                  style={[styles.statusPill, isSelected && styles.statusPillActive]}
+                  onPress={() => setSystemStatusFilter(st)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.statusPillText, isSelected && styles.statusPillTextActive]}>
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Recent Activity Timeline matching chart */}
+        <View style={styles.sectionBlock}>
+          <Text style={styles.sectionHeaderTitle}>Recent Activity</Text>
+          <View style={styles.activityCard}>
+            <View style={styles.activityRow}>
+              <View style={[styles.activityIconWrap, { backgroundColor: 'rgba(255, 138, 80, 0.15)' }]}>
+                <MaterialCommunityIcons name="alert-circle" size={20} color={Colors.primary} />
+              </View>
+              <View style={styles.activityInfo}>
+                <Text style={styles.activityHead}>Tank level is low</Text>
+                <Text style={styles.activityTime}>2 min ago</Text>
               </View>
             </View>
-            <GlassToggle
-              value={isTankPumpOn}
-              onValueChange={() => togglePump('dev-tank-pump', isTankPumpOn)}
-              status={tankPump?.state['power']?.commandStatus as any}
-            />
-          </View>
-
-          <View style={styles.flowLine} />
-
-          {/* Node 5: Overhead Tank */}
-          <View style={styles.flowNode}>
-            <View style={styles.nodeLeft}>
-              <View style={styles.iconCircle}>
-                <MaterialCommunityIcons name="water" size={20} color={Colors.primary} />
+            <View style={styles.activityRow}>
+              <View style={styles.activityIconWrap}>
+                <MaterialCommunityIcons name="pump" size={20} color={Colors.textMuted} />
               </View>
-              <View>
-                <Text style={styles.nodeName}>Overhead Tank</Text>
-                <Text style={styles.nodeState}>Primary distribution tank</Text>
+              <View style={styles.activityInfo}>
+                <Text style={styles.activityHead}>Irrigation pump turned off</Text>
+                <Text style={styles.activityTime}>15 min ago</Text>
+              </View>
+            </View>
+            <View style={styles.activityRow}>
+              <View style={[styles.activityIconWrap, { backgroundColor: 'rgba(107, 203, 140, 0.15)' }]}>
+                <MaterialCommunityIcons name="pump" size={20} color={Colors.success} />
+              </View>
+              <View style={styles.activityInfo}>
+                <Text style={styles.activityHead}>Sump pump turned on</Text>
+                <Text style={styles.activityTime}>1 hour ago</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        <View style={{ height: 120 }} />
+      </ScrollView>
+    </SafeAreaView>
+  );
               </View>
             </View>
             <View style={styles.levelWrap}>
@@ -180,8 +215,22 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: Spacing.base,
     paddingVertical: Spacing.md,
+  },
+  headerLeftGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  backBtn: {
+    marginRight: Spacing.xs,
+    padding: Spacing.xs,
+  },
+  headerActionBtn: {
+    padding: Spacing.xs,
   },
   title: {
     fontFamily: Typography.fontFamily.bold,
@@ -191,65 +240,167 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: Spacing.base,
     paddingTop: Spacing.xs,
-    paddingBottom: 120,
   },
-  schematicCard: {
-    padding: Spacing.xl,
+  diagramContainer: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    marginBottom: Spacing.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
-  sectionTitle: {
+  diagramTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.lg,
+    gap: Spacing.md,
+  },
+  diagramBottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: Spacing.sm,
+  },
+  diagramNodeCard: {
+    flex: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  tankNodeCard: {
+    flex: 1.2,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  tankLevelVisual: {
+    width: 32,
+    height: 48,
+    borderRadius: Radius.sm,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    overflow: 'hidden',
+    justifyContent: 'flex-end',
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  tankLiquidFill: {
+    width: '100%',
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.xs,
+  },
+  nodeIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: Radius.full,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  nodeIconCircleActive: {
+    backgroundColor: 'rgba(255, 138, 80, 0.15)',
+  },
+  nodeTitle: {
+    fontFamily: Typography.fontFamily.medium,
+    fontSize: Typography.fontSize.xs,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+  },
+  nodeSub: {
+    fontFamily: Typography.fontFamily.regular,
+    fontSize: 10,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+  },
+  nodeValue: {
+    fontFamily: Typography.fontFamily.bold,
+    fontSize: Typography.fontSize.sm,
+    color: Colors.textPrimary,
+    marginTop: 2,
+  },
+  nodeTag: {
+    fontFamily: Typography.fontFamily.medium,
+    fontSize: 10,
+    marginTop: 2,
+    color: Colors.primary,
+  },
+  sectionBlock: {
+    marginBottom: Spacing.lg,
+  },
+  sectionHeaderTitle: {
     fontFamily: Typography.fontFamily.bold,
     fontSize: Typography.fontSize.md,
     color: Colors.textPrimary,
-    marginBottom: Spacing.xl,
+    marginBottom: Spacing.sm,
   },
-  flowNode: {
+  statusPillsRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: Colors.glass,
-    borderWidth: 1,
-    borderColor: Colors.glassBorder,
-    borderRadius: Radius.md,
-    padding: Spacing.md,
+    gap: Spacing.sm,
   },
-  nodeLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  statusPill: {
     flex: 1,
-    marginRight: Spacing.sm,
-  },
-  iconCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: Radius.sm,
     backgroundColor: Colors.surface,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.full,
+    alignItems: 'center',
     borderWidth: 1,
-    borderColor: Colors.glassBorder,
+    borderColor: Colors.border,
+  },
+  statusPillActive: {
+    backgroundColor: Colors.surface,
+    borderColor: Colors.primary,
+  },
+  statusPillText: {
+    fontFamily: Typography.fontFamily.medium,
+    fontSize: Typography.fontSize.sm,
+    color: Colors.textSecondary,
+  },
+  statusPillTextActive: {
+    color: Colors.primary,
+    fontFamily: Typography.fontFamily.bold,
+  },
+  activityCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  activityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.04)',
+  },
+  activityIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: Radius.full,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: Spacing.md,
   },
-  iconCircleActive: {
-    backgroundColor: Colors.primarySurface,
-    borderColor: Colors.primary,
+  activityInfo: {
+    flex: 1,
   },
-  nodeName: {
-    fontFamily: Typography.fontFamily.semiBold,
-    fontSize: Typography.fontSize.base,
+  activityHead: {
+    fontFamily: Typography.fontFamily.medium,
+    fontSize: Typography.fontSize.sm,
     color: Colors.textPrimary,
   },
-  nodeState: {
+  activityTime: {
     fontFamily: Typography.fontFamily.regular,
     fontSize: Typography.fontSize.xs,
-    color: Colors.textMuted,
+    color: Colors.textSecondary,
     marginTop: 2,
-  },
-  flowLine: {
-    width: 2,
-    height: 18,
-    backgroundColor: Colors.glassBorder,
-    alignSelf: 'center',
-    marginVertical: 2,
   },
   levelWrap: {
     alignItems: 'flex-end',

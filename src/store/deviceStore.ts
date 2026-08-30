@@ -30,9 +30,9 @@ export const useDeviceStore = create<DeviceStore>((set, get) => ({
   loadDevices: async () => {
     set({ isLoading: true, error: null });
     try {
-      // TODO Phase 6: Replace with deviceService.getDevices()
-      await new Promise(r => setTimeout(r, 400)); // simulate network
-      set({ devices: mockDevices, isLoading: false });
+      // Empty by default per user requirement; populated when real devices are paired
+      await new Promise(r => setTimeout(r, 200));
+      set(state => ({ devices: state.devices, isLoading: false }));
     } catch (e) {
       set({ error: 'Failed to load devices', isLoading: false });
     }
