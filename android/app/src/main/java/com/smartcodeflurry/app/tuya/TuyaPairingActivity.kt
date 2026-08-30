@@ -1,10 +1,15 @@
 package com.smartcodeflurry.app.tuya
 
+import android.Manifest
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Context
-import android.graphics.Color
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.*
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -12,16 +17,17 @@ import android.text.InputType
 import android.util.Log
 import android.view.Gravity
 import android.view.View
-import android.widget.Button
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.ScrollView
-import android.widget.TextView
+import android.view.ViewGroup
+import android.view.animation.LinearInterpolator
+import android.widget.*
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import com.smartcodeflurry.app.R
 import com.thingclips.smart.android.ble.api.BleScanResponse
 import com.thingclips.smart.android.ble.api.ScanDeviceBean
 import com.thingclips.smart.android.ble.api.ScanType
 import com.thingclips.smart.home.sdk.ThingHomeSdk
+import com.thingclips.smart.home.sdk.bean.HomeBean
 import com.thingclips.smart.home.sdk.builder.ActivatorBuilder
 import com.thingclips.smart.home.sdk.callback.IThingGetHomeListCallback
 import com.thingclips.smart.home.sdk.callback.IThingHomeResultCallback
@@ -30,358 +36,587 @@ import com.thingclips.smart.sdk.api.IThingActivatorGetToken
 import com.thingclips.smart.sdk.api.IThingSmartActivatorListener
 import com.thingclips.smart.sdk.bean.DeviceBean
 import com.thingclips.smart.sdk.enums.ActivatorModelEnum
-import com.thingclips.smart.home.sdk.bean.HomeBean
 
 /**
- * Tuya Smart-Life-style Device Discovery & Activator Activity
- * 
- * Verified against Tuya SDK 7.8.0 APIs:
- * 1. ThingHomeSdk.getBleOperator().startLeScan() / stopLeScan()
- * 2. BleScanResponse / ScanDeviceBean callbacks
- * 3. Token resolution via IThingActivatorGetToken
- * 4. ActivatorBuilder provisioning flow with IThingSmartActivatorListener
+ * Smart Life / Tuya Standard Add Device Screen
+ * Matches the official Smart Life design with radar animation, category explorer, device tiles, and 3-step pairing flow.
  */
 class TuyaPairingActivity : Activity() {
 
     companion object {
         private const val TAG = "TuyaPairingActivity"
-        private const val TIMEOUT_SECONDS = 120L
+        private const val PERMISSION_REQ_CODE = 1001
+        private const val TIMEOUT_SECONDS = 100L
         private const val SCAN_TIMEOUT_MS = 60000
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var activator: IThingActivator? = null
 
-    // UI Elements
-    private lateinit var mainLayout: LinearLayout
-    private lateinit var statusText: TextView
-    private lateinit var discoveryContainer: LinearLayout
-    private lateinit var discoveredDevicesLayout: LinearLayout
-    private lateinit var scanProgressBar: ProgressBar
-    private lateinit var wifiSection: LinearLayout
-    private lateinit var ssidInput: EditText
-    private lateinit var passwordInput: EditText
-    private lateinit var startPairingBtn: Button
+    // UI Root & Components
+    private lateinit var rootContainer: FrameLayout
+    private lateinit var mainContentLayout: LinearLayout
+    private lateinit var radarView: RadarScanView
+    private lateinit var nearbyStatusText: TextView
+    private lateinit var discoveredListContainer: LinearLayout
+    private lateinit var categorySidebar: LinearLayout
+    private lateinit var deviceGridContainer: LinearLayout
+    private lateinit var searchInput: EditText
 
-    // Scanning & Selection State
-    private var isScanning = false
+    // Wizard Overlay Components
+    private var wizardOverlay: FrameLayout? = null
+    private var selectedCategory = "Electrical"
+    private var selectedDeviceType = "Socket (Wi-Fi)"
     private val discoveredDevices = mutableSetOf<String>()
-    private var selectedDeviceName: String = "Tuya Smart Device"
+
+    // Categories & Device Models
+    private val categories = listOf("Electrical", "Lighting", "Sensors", "Water & Pumps", "Appliances")
+    private val devicesByCategory = mapOf(
+        "Electrical" to listOf(
+            DeviceItem("Socket (Wi-Fi)", "??", "Standard 16A/10A Smart Plug"),
+            DeviceItem("Socket (Gateway)", "??", "Zigbee / Mesh Smart Socket"),
+            DeviceItem("Power Strip", "???", "Multi-outlet Smart Extension"),
+            DeviceItem("Smart Breaker", "?", "DIN Rail Power Meter / MCB"),
+            DeviceItem("Wall Switch", "??", "1/2/3/4 Gang Smart Switch")
+        ),
+        "Lighting" to listOf(
+            DeviceItem("Smart Light Bulb", "??", "RGB + CCT Wi-Fi Bulb"),
+            DeviceItem("LED Strip Light", "?", "Addressable LED Strip Controller"),
+            DeviceItem("Ceiling Lamp", "??", "Dimmable Ambient Light"),
+            DeviceItem("Garden Spotlight", "??", "Outdoor Landscape Light")
+        ),
+        "Sensors" to listOf(
+            DeviceItem("Tank Level Sensor", "??", "Ultrasonic Water Level Meter"),
+            DeviceItem("Sump Level Sensor", "??", "Submersible Hydrostatic Sensor"),
+            DeviceItem("Soil Moisture", "??", "Capacitive Agricultural Sensor"),
+            DeviceItem("Temp & Humidity", "???", "Ambient Climate Monitor"),
+            DeviceItem("Water Leak Detector", "??", "Floor Flood Sensor")
+        ),
+        "Water & Pumps" to listOf(
+            DeviceItem("Borewell Pump", "??", "High-Power Submersible Starter"),
+            DeviceItem("Tank Pump", "??", "Overhead Tank Inflow Motor"),
+            DeviceItem("Irrigation Pump", "??", "Drip Irrigation Line Valve"),
+            DeviceItem("Solenoid Valve", "??", "Motorized Ball Valve Controller")
+        ),
+        "Appliances" to listOf(
+            DeviceItem("Water Heater", "??", "Smart Geyser Controller"),
+            DeviceItem("Air Conditioner", "??", "Smart IR Controller"),
+            DeviceItem("Water Purifier", "??", "RO System Monitor")
+        )
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(createUi())
-
-        // Start automatic nearby discovery scan immediately upon opening
-        startNearbyDiscoveryScan()
+        buildMainUi()
+        requestPermissionsIfNeeded()
+        startNearbyBleScan()
     }
 
     override fun onDestroy() {
-        stopNearbyDiscoveryScan()
+        stopNearbyBleScan()
         try {
             activator?.stop()
             activator?.onDestroy()
         } catch (e: Exception) {
-            Log.w(TAG, "Error cleaning activator on destroy: ${e.message}")
+            Log.w(TAG, "Error cleaning activator: ${e.message}")
         }
         super.onDestroy()
     }
 
-    private fun createUi(): View {
-        val root = ScrollView(this).apply {
+    // ==========================================
+    // UI BUILDER
+    // ==========================================
+
+    private fun buildMainUi() {
+        rootContainer = FrameLayout(this).apply {
             setBackgroundColor(Color.parseColor("#0F172A"))
+        }
+
+        val scrollView = ScrollView(this).apply {
             isFillViewport = true
         }
 
-        mainLayout = LinearLayout(this).apply {
+        mainContentLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(40, 48, 40, 48)
+            setPadding(32, 48, 32, 48)
         }
 
-        // Title Header
-        val titleText = TextView(this).apply {
-            text = "Tuya Smart Device Discovery"
-            setTextColor(Color.WHITE)
+        // 1. Top Header Bar (< Add Device [QR])
+        val headerBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, 32)
+        }
+
+        val backBtn = TextView(this).apply {
+            text = "?"
             textSize = 22f
+            setTextColor(Color.WHITE)
+            setPadding(16, 16, 32, 16)
+            setOnClickListener { finish() }
+        }
+        headerBar.addView(backBtn)
+
+        val headerTitle = TextView(this).apply {
+            text = "Add Device"
+            textSize = 20f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
+        }
+        headerBar.addView(headerTitle)
+
+        val qrIcon = TextView(this).apply {
+            text = "?"
+            textSize = 22f
+            setTextColor(Color.parseColor("#38BDF8"))
+            setPadding(32, 16, 16, 16)
+            setOnClickListener { Toast.makeText(this@TuyaPairingActivity, "Point camera at device QR code", Toast.LENGTH_SHORT).show() }
+        }
+        headerBar.addView(qrIcon)
+        mainContentLayout.addView(headerBar)
+
+        // 2. Radar Scan Area
+        val radarContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, 0, 0, 32)
+        }
+
+        val searchingTitle = TextView(this).apply {
+            text = "Searching for nearby devices..."
+            textSize = 18f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
             setPadding(0, 0, 0, 8)
         }
-        mainLayout.addView(titleText)
+        radarContainer.addView(searchingTitle)
 
-        val subtitleText = TextView(this).apply {
-            text = "Searching for nearby Tuya & Smart Life devices..."
+        val searchingSubtitle = TextView(this).apply {
+            text = "Make sure the device is powered on and in pairing mode."
+            textSize = 13f
             setTextColor(Color.parseColor("#94A3B8"))
-            textSize = 14f
+            gravity = Gravity.CENTER
             setPadding(0, 0, 0, 24)
         }
-        mainLayout.addView(subtitleText)
+        radarContainer.addView(searchingSubtitle)
 
-        // Status Header
-        statusText = TextView(this).apply {
-            text = "Initializing discovery..."
+        radarView = RadarScanView(this)
+        val radarParams = LinearLayout.LayoutParams(360, 360).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            bottomMargin = 24
+        }
+        radarContainer.addView(radarView, radarParams)
+
+        nearbyStatusText = TextView(this).apply {
+            text = "Scanning nearby Bluetooth & Wi-Fi devices..."
+            textSize = 12f
             setTextColor(Color.parseColor("#38BDF8"))
-            textSize = 14f
+            gravity = Gravity.CENTER
             setPadding(0, 0, 0, 16)
         }
-        mainLayout.addView(statusText)
+        radarContainer.addView(nearbyStatusText)
 
-        // Progress Bar
-        scanProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            isIndeterminate = true
-            setPadding(0, 0, 0, 24)
-        }
-        mainLayout.addView(scanProgressBar)
-
-        // Discovered Devices Section
-        discoveryContainer = LinearLayout(this).apply {
+        // Discovered Devices Container
+        discoveredListContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
         }
+        radarContainer.addView(discoveredListContainer)
 
-        val discoveredHeader = TextView(this).apply {
-            text = "DISCOVERED NEARBY DEVICES"
-            setTextColor(Color.parseColor("#94A3B8"))
-            textSize = 12f
-            setPadding(0, 0, 0, 12)
+        mainContentLayout.addView(radarContainer)
+
+        // Divider
+        val divider = View(this).apply {
+            setBackgroundColor(Color.parseColor("#334155"))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 2).apply {
+                bottomMargin = 32
+            }
         }
-        discoveryContainer.addView(discoveredHeader)
+        mainContentLayout.addView(divider)
 
-        discoveredDevicesLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        discoveryContainer.addView(discoveredDevicesLayout)
-        mainLayout.addView(discoveryContainer)
-
-        // Wi-Fi Credentials Section (Shown after device selection)
-        wifiSection = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, 24, 0, 0)
-        }
-
-        wifiSection.addView(label("WI-FI NETWORK (2.4 GHz Required)"))
-        ssidInput = EditText(this).apply {
-            hint = "Wi-Fi SSID"
-            setHintTextColor(Color.GRAY)
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#1E293B"))
-            setPadding(32, 24, 32, 24)
-        }
-        wifiSection.addView(ssidInput)
-        wifiSection.addView(spacer(12))
-
-        wifiSection.addView(label("WI-FI PASSWORD"))
-        passwordInput = EditText(this).apply {
-            hint = "Wi-Fi Password"
-            setHintTextColor(Color.GRAY)
-            setTextColor(Color.WHITE)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setBackgroundColor(Color.parseColor("#1E293B"))
-            setPadding(32, 24, 32, 24)
-        }
-        wifiSection.addView(passwordInput)
-        wifiSection.addView(spacer(20))
-
-        startPairingBtn = Button(this).apply {
-            text = "Connect & Provision Device"
-            setBackgroundColor(Color.parseColor("#38BDF8"))
-            setTextColor(Color.WHITE)
-            setOnClickListener { onStartProvisioning() }
-        }
-        wifiSection.addView(startPairingBtn)
-        mainLayout.addView(wifiSection)
-
-        // Cancel / Exit Button
-        val closeBtn = Button(this).apply {
-            text = "Cancel"
-            setBackgroundColor(Color.TRANSPARENT)
-            setTextColor(Color.parseColor("#94A3B8"))
-            setOnClickListener { finishWithResult(false) }
-        }
-        mainLayout.addView(spacer(16))
-        mainLayout.addView(closeBtn)
-
-        root.addView(mainLayout)
-        fetchAndSetSsid()
-        return root
-    }
-
-    /**
-     * 1. Discovery Start: Begins active nearby Tuya device scanning via ThingHomeSdk.getBleOperator().startLeScan()
-     */
-    private fun startNearbyDiscoveryScan() {
-        isScanning = true
-        setStatus("Scanning for nearby Tuya devices...", Color.parseColor("#38BDF8"))
-        scanProgressBar.visibility = View.VISIBLE
-
-        try {
-            // Verified Tuya SDK 7.8.0 BLE Operator Scan API
-            ThingHomeSdk.getBleOperator().startLeScan(SCAN_TIMEOUT_MS, ScanType.SINGLE, object : BleScanResponse {
-                override fun onResult(bean: ScanDeviceBean?) {
-                    if (bean != null) {
-                        mainHandler.post {
-                            val deviceName = if (!bean.name.isNullOrBlank()) bean.name else "Tuya Smart Device (${bean.mac ?: bean.uuid ?: "Nearby"})"
-                            val rssiInfo = if (bean.rssi != 0) "RSSI: ${bean.rssi} dBm" else "Signal Strong"
-                            addDiscoveredDeviceItem(deviceName, rssiInfo)
-                        }
-                    }
-                }
-            })
-        } catch (e: Exception) {
-            Log.w(TAG, "BLE scan start notice: ${e.message}")
-        }
-    }
-
-    /**
-     * Stop nearby BLE scan via ThingHomeSdk.getBleOperator().stopLeScan()
-     */
-    private fun stopNearbyDiscoveryScan() {
-        isScanning = false
-        scanProgressBar.visibility = View.GONE
-        try {
-            ThingHomeSdk.getBleOperator().stopLeScan()
-        } catch (e: Exception) {
-            Log.w(TAG, "BLE scan stop notice: ${e.message}")
-        }
-    }
-
-    /**
-     * 2. Discovery Callbacks & Discovered Device Rendering:
-     * Adds discovered devices to the UI list and attaches selection listener.
-     */
-    private fun addDiscoveredDeviceItem(deviceName: String, detail: String) {
-        if (!discoveredDevices.add(deviceName)) return
-
-        val deviceCard = LinearLayout(this).apply {
+        // 3. "Add Manually" Section Header
+        val manualHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, 20)
+        }
+
+        val manualTitle = TextView(this).apply {
+            text = "Add Manually"
+            textSize = 17f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
+        }
+        manualHeader.addView(manualTitle)
+        mainContentLayout.addView(manualHeader)
+
+        // 4. Search Bar
+        searchInput = EditText(this).apply {
+            hint = "Search for a category or device..."
+            setHintTextColor(Color.parseColor("#64748B"))
+            setTextColor(Color.WHITE)
+            textSize = 14f
             setBackgroundColor(Color.parseColor("#1E293B"))
             setPadding(32, 24, 32, 24)
-            gravity = Gravity.CENTER_VERTICAL
-            val params = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, 0, 0, 16) }
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = 24
+            }
+        }
+        mainContentLayout.addView(searchInput)
+
+        // 5. Category Split View (Sidebar Left + Grid Right)
+        val splitContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, 32)
+        }
+
+        // Left Sidebar
+        categorySidebar = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(260, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setPadding(0, 0, 16, 0)
+        }
+        splitContainer.addView(categorySidebar)
+
+        // Right Device Grid
+        deviceGridContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
+            setPadding(16, 0, 0, 0)
+        }
+        splitContainer.addView(deviceGridContainer)
+
+        mainContentLayout.addView(splitContainer)
+        scrollView.addView(mainContentLayout)
+        rootContainer.addView(scrollView)
+        setContentView(rootContainer)
+
+        renderCategories()
+        renderDeviceGrid(selectedCategory)
+    }
+
+    // ==========================================
+    // RADAR & CATEGORY RENDERING
+    // ==========================================
+
+    private fun renderCategories() {
+        categorySidebar.removeAllViews()
+        for (cat in categories) {
+            val isSelected = cat == selectedCategory
+            val catBtn = TextView(this).apply {
+                text = cat
+                textSize = 14f
+                setPadding(24, 28, 24, 28)
+                if (isSelected) {
+                    setTextColor(Color.parseColor("#38BDF8"))
+                    setTypeface(null, Typeface.BOLD)
+                    setBackgroundColor(Color.parseColor("#1E293B"))
+                } else {
+                    setTextColor(Color.parseColor("#94A3B8"))
+                    setTypeface(null, Typeface.NORMAL)
+                    setBackgroundColor(Color.TRANSPARENT)
+                }
+                setOnClickListener {
+                    selectedCategory = cat
+                    renderCategories()
+                    renderDeviceGrid(cat)
+                }
+            }
+            categorySidebar.addView(catBtn)
+        }
+    }
+
+    private fun renderDeviceGrid(category: String) {
+        deviceGridContainer.removeAllViews()
+        val devices = devicesByCategory[category] ?: emptyList()
+
+        for (dev in devices) {
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setBackgroundColor(Color.parseColor("#1E293B"))
+                setPadding(24, 24, 24, 24)
+                val params = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = 16 }
+                layoutParams = params
+                setOnClickListener {
+                    openPairingWizard(dev.name, dev.icon)
+                }
+            }
+
+            val iconView = TextView(this).apply {
+                text = dev.icon
+                textSize = 28f
+                setPadding(0, 0, 24, 0)
+            }
+            card.addView(iconView)
+
+            val textLayout = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
+            }
+
+            val nameView = TextView(this).apply {
+                text = dev.name
+                setTextColor(Color.WHITE)
+                textSize = 15f
+                setTypeface(null, Typeface.BOLD)
+            }
+            textLayout.addView(nameView)
+
+            val descView = TextView(this).apply {
+                text = dev.desc
+                setTextColor(Color.parseColor("#94A3B8"))
+                textSize = 12f
+                setPadding(0, 4, 0, 0)
+            }
+            textLayout.addView(descView)
+            card.addView(textLayout)
+
+            val arrow = TextView(this).apply {
+                text = "›"
+                textSize = 22f
+                setTextColor(Color.parseColor("#64748B"))
+            }
+            card.addView(arrow)
+
+            deviceGridContainer.addView(card)
+        }
+    }
+
+    // ==========================================
+    // PAIRING WIZARD OVERLAY
+    // ==========================================
+
+    private fun openPairingWizard(deviceName: String, deviceIcon: String) {
+        selectedDeviceType = deviceName
+        closeWizard()
+
+        val overlay = FrameLayout(this).apply {
+            setBackgroundColor(Color.parseColor("#E60F172A"))
+            isClickable = true
+        }
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#1E293B"))
+            setPadding(40, 40, 40, 40)
+            val params = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.CENTER
+                setMargins(40, 40, 40, 40)
+            }
             layoutParams = params
         }
 
-        val textLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f)
+        // Header
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, 24)
         }
 
-        val nameView = TextView(this).apply {
-            text = deviceName
+        val title = TextView(this).apply {
+            text = "Connect $deviceName"
             setTextColor(Color.WHITE)
-            textSize = 16f
+            textSize = 18f
+            setTypeface(null, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
         }
-        val detailView = TextView(this).apply {
-            text = detail
+        header.addView(title)
+
+        val close = TextView(this).apply {
+            text = "?"
+            setTextColor(Color.parseColor("#94A3B8"))
+            textSize = 20f
+            setPadding(16, 0, 0, 16)
+            setOnClickListener { closeWizard() }
+        }
+        header.addView(close)
+        card.addView(header)
+
+        // Step 1: Mode Check
+        val step1Text = TextView(this).apply {
+            text = "1. Power on device and ensure the LED indicator is blinking rapidly."
             setTextColor(Color.parseColor("#38BDF8"))
-            textSize = 12f
+            textSize = 13f
+            setPadding(0, 0, 0, 20)
         }
-        textLayout.addView(nameView)
-        textLayout.addView(detailView)
-        deviceCard.addView(textLayout)
+        card.addView(step1Text)
 
-        val pairBtn = Button(this).apply {
-            text = "Select"
-            setBackgroundColor(Color.parseColor("#22C55E"))
+        // Step 2: Wi-Fi Credentials
+        val ssidLabel = TextView(this).apply {
+            text = "WI-FI NETWORK (2.4 GHz Required)"
+            setTextColor(Color.parseColor("#94A3B8"))
+            textSize = 11f
+            setPadding(0, 0, 0, 8)
+        }
+        card.addView(ssidLabel)
+
+        val ssidInput = EditText(this).apply {
+            hint = "2.4 GHz Wi-Fi SSID"
+            setHintTextColor(Color.parseColor("#64748B"))
             setTextColor(Color.WHITE)
-            setOnClickListener { onDeviceSelected(deviceName) }
+            setText(getConnectedWifiSsid())
+            setBackgroundColor(Color.parseColor("#0F172A"))
+            setPadding(24, 20, 24, 20)
         }
-        deviceCard.addView(pairBtn)
+        card.addView(ssidInput)
 
-        discoveredDevicesLayout.addView(deviceCard)
-        setStatus("Discovered $deviceName. Tap 'Select' to pair.", Color.parseColor("#4ADE80"))
+        val passLabel = TextView(this).apply {
+            text = "WI-FI PASSWORD"
+            setTextColor(Color.parseColor("#94A3B8"))
+            textSize = 11f
+            setPadding(0, 16, 0, 8)
+        }
+        card.addView(passLabel)
+
+        val passInput = EditText(this).apply {
+            hint = "Wi-Fi Password"
+            setHintTextColor(Color.parseColor("#64748B"))
+            setTextColor(Color.WHITE)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setBackgroundColor(Color.parseColor("#0F172A"))
+            setPadding(24, 20, 24, 20)
+        }
+        card.addView(passInput)
+
+        // Provisioning Progress Status
+        val statusText = TextView(this).apply {
+            text = "Ready to connect."
+            setTextColor(Color.parseColor("#94A3B8"))
+            textSize = 13f
+            setPadding(0, 20, 0, 20)
+            gravity = Gravity.CENTER
+        }
+        card.addView(statusText)
+
+        // Action Button
+        val actionBtn = Button(this).apply {
+            text = "START PROVISIONING"
+            setBackgroundColor(Color.parseColor("#38BDF8"))
+            setTextColor(Color.WHITE)
+            setTypeface(null, Typeface.BOLD)
+            setOnClickListener {
+                val ssid = ssidInput.text.toString().trim()
+                val pass = passInput.text.toString()
+                if (ssid.isEmpty()) {
+                    statusText.text = "Please enter Wi-Fi SSID."
+                    statusText.setTextColor(Color.YELLOW)
+                    return@setOnClickListener
+                }
+                isEnabled = false
+                text = "PROVISIONING..."
+                statusText.text = "Acquiring Tuya Cloud token..."
+                statusText.setTextColor(Color.parseColor("#38BDF8"))
+                startActivationFlow(ssid, pass, statusText, this)
+            }
+        }
+        card.addView(actionBtn)
+
+        overlay.addView(card)
+        rootContainer.addView(overlay)
+        wizardOverlay = overlay
     }
 
-    /**
-     * 3. Device Selection: Stops scanning and opens provisioning Wi-Fi view for selected device.
-     */
-    private fun onDeviceSelected(deviceName: String) {
-        selectedDeviceName = deviceName
-        stopNearbyDiscoveryScan()
-
-        setStatus("Selected: $deviceName. Enter Wi-Fi details to complete pairing.", Color.parseColor("#38BDF8"))
-        wifiSection.visibility = View.VISIBLE
-        startPairingBtn.text = "Provision $deviceName"
+    private fun closeWizard() {
+        wizardOverlay?.let {
+            rootContainer.removeView(it)
+            wizardOverlay = null
+        }
     }
 
-    /**
-     * 4. Provisioning / Activation: Token resolution & ActivatorBuilder launch.
-     */
-    private fun onStartProvisioning() {
-        val ssid = ssidInput.text.toString().trim()
-        val pwd = passwordInput.text.toString()
+    // ==========================================
+    // TUYA ACTIVATION FLOW
+    // ==========================================
 
-        if (ssid.isEmpty() || ssid == "<unknown ssid>") {
-            setStatus("Please enter a valid 2.4 GHz Wi-Fi SSID.", Color.YELLOW)
-            return
-        }
-
-        startPairingBtn.isEnabled = false
-        startPairingBtn.text = "Provisioning..."
-        setStatus("Obtaining Tuya activation token...", Color.parseColor("#38BDF8"))
-
+    private fun startActivationFlow(ssid: String, pwd: String, statusText: TextView, btn: Button) {
         getDefaultHomeId { homeId ->
             ThingHomeSdk.getActivatorInstance().getActivatorToken(homeId, object : IThingActivatorGetToken {
                 override fun onSuccess(token: String?) {
                     if (token.isNullOrEmpty()) {
-                        setStatus("Received empty activation token from Tuya Cloud.", Color.RED)
-                        resetButtons()
+                        mainHandler.post {
+                            statusText.text = "Error: empty token from Tuya Cloud"
+                            statusText.setTextColor(Color.RED)
+                            btn.isEnabled = true
+                            btn.text = "RETRY"
+                        }
                         return
                     }
-                    startTuyaActivator(ssid, pwd, token)
+
+                    mainHandler.post {
+                        statusText.text = "Connecting to device... (EZ Mode)"
+                    }
+
+                    try {
+                        val builder = ActivatorBuilder()
+                            .setSsid(ssid)
+                            .setPassword(pwd)
+                            .setToken(token)
+                            .setTimeOut(TIMEOUT_SECONDS)
+                            .setContext(this@TuyaPairingActivity)
+                            .setActivatorModel(ActivatorModelEnum.THING_EZ)
+                            .setListener(object : IThingSmartActivatorListener {
+                                override fun onError(code: String?, msg: String?) {
+                                    mainHandler.post {
+                                        statusText.text = "Pairing failed ($code): $msg"
+                                        statusText.setTextColor(Color.RED)
+                                        btn.isEnabled = true
+                                        btn.text = "RETRY"
+                                    }
+                                }
+
+                                override fun onActiveSuccess(devResp: DeviceBean?) {
+                                    mainHandler.post {
+                                        val devName = devResp?.name ?: devResp?.devId ?: selectedDeviceType
+                                        statusText.text = "Device Paired Successfully!\n$devName"
+                                        statusText.setTextColor(Color.parseColor("#4ADE80"))
+                                        btn.isEnabled = true
+                                        btn.text = "DONE"
+                                        btn.setBackgroundColor(Color.parseColor("#22C55E"))
+                                        btn.setOnClickListener {
+                                            setResult(RESULT_OK)
+                                            finish()
+                                        }
+                                    }
+                                }
+
+                                override fun onStep(step: String?, data: Any?) {
+                                    mainHandler.post {
+                                        statusText.text = "Step: $step"
+                                    }
+                                }
+                            })
+
+                        activator = ThingHomeSdk.getActivatorInstance().newEZWifiConfigDevActivator(builder)
+                        activator?.start()
+                    } catch (e: Exception) {
+                        mainHandler.post {
+                            statusText.text = "Activator error: ${e.message}"
+                            statusText.setTextColor(Color.RED)
+                            btn.isEnabled = true
+                            btn.text = "RETRY"
+                        }
+                    }
                 }
 
-                override fun onFailure(errorCode: String?, errorMsg: String?) {
-                    setStatus("Token error ($errorCode): $errorMsg", Color.RED)
-                    resetButtons()
+                override fun onFailure(code: String?, msg: String?) {
+                    mainHandler.post {
+                        statusText.text = "Token resolution error ($code): $msg"
+                        statusText.setTextColor(Color.RED)
+                        btn.isEnabled = true
+                        btn.text = "RETRY"
+                    }
                 }
             })
-        }
-    }
-
-    private fun startTuyaActivator(ssid: String, pwd: String, token: String) {
-        try {
-            val builder = ActivatorBuilder()
-                .setSsid(ssid)
-                .setPassword(pwd)
-                .setToken(token)
-                .setTimeOut(TIMEOUT_SECONDS)
-                .setContext(this)
-                .setActivatorModel(ActivatorModelEnum.THING_EZ)
-                .setListener(pairingListener)
-
-            activator = ThingHomeSdk.getActivatorInstance().newEZWifiConfigDevActivator(builder)
-            setStatus("Provisioning $selectedDeviceName... (${TIMEOUT_SECONDS}s)", Color.parseColor("#38BDF8"))
-            activator?.start()
-        } catch (e: Exception) {
-            setStatus("Activator exception: ${e.message}", Color.RED)
-            resetButtons()
-        }
-    }
-
-    /**
-     * 5. Activation Callback Handler
-     */
-    private val pairingListener = object : IThingSmartActivatorListener {
-        override fun onError(errorCode: String?, errorMsg: String?) {
-            mainHandler.post {
-                setStatus("Pairing failed ($errorCode): $errorMsg", Color.RED)
-                resetButtons()
-            }
-        }
-
-        override fun onActiveSuccess(devResp: DeviceBean?) {
-            mainHandler.post {
-                val name = devResp?.name ?: devResp?.devId ?: selectedDeviceName
-                setStatus("Device paired successfully! Name: $name", Color.parseColor("#4ADE80"))
-                showDoneButton()
-            }
-        }
-
-        override fun onStep(step: String?, data: Any?) {
-            mainHandler.post {
-                setStatus("Step: $step", Color.parseColor("#38BDF8"))
-            }
         }
     }
 
@@ -395,86 +630,192 @@ class TuyaPairingActivity : Activity() {
                 }
             }
             override fun onError(code: String, msg: String) {
-                mainHandler.post {
-                    setStatus("Home query failed ($code): $msg", Color.RED)
-                    resetButtons()
-                }
+                createDefaultHome(callback)
             }
         })
     }
 
     private fun createDefaultHome(callback: (Long) -> Unit) {
-        ThingHomeSdk.getHomeManagerInstance().createHome("Smart CodeFlurry Home", 0.0, 0.0, "Home", emptyList(),
-            object : IThingHomeResultCallback {
-                override fun onSuccess(bean: HomeBean?) {
-                    val id = bean?.homeId ?: 0L
-                    mainHandler.post {
-                        if (id != 0L) callback(id)
-                        else {
-                            setStatus("Could not create Tuya Home.", Color.RED)
-                            resetButtons()
+        ThingHomeSdk.getHomeManagerInstance().createHome("SmartCodeFlurry Home", 0.0, 0.0, "", emptyList(), object : IThingHomeResultCallback {
+            override fun onSuccess(bean: HomeBean?) {
+                callback(bean?.homeId ?: 0L)
+            }
+            override fun onError(code: String, msg: String) {
+                callback(0L)
+            }
+        })
+    }
+
+    // ==========================================
+    // BLE SCAN & UTILITIES
+    // ==========================================
+
+    private fun startNearbyBleScan() {
+        try {
+            ThingHomeSdk.getBleOperator().startLeScan(SCAN_TIMEOUT_MS, ScanType.SINGLE, object : BleScanResponse {
+                override fun onResult(bean: ScanDeviceBean?) {
+                    if (bean != null) {
+                        mainHandler.post {
+                            val name = if (!bean.name.isNullOrBlank()) bean.name else "Tuya Smart Device (${bean.mac ?: "Nearby"})"
+                            addDiscoveredNearbyDevice(name, if (bean.rssi != 0) "${bean.rssi} dBm" else "Strong Signal")
                         }
                     }
                 }
-                override fun onError(code: String, msg: String) {
-                    mainHandler.post {
-                        setStatus("Create home failed ($code): $msg", Color.RED)
-                        resetButtons()
-                    }
-                }
-            }
-        )
-    }
-
-    private fun fetchAndSetSsid() {
-        try {
-            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            val info: WifiInfo? = wm.connectionInfo
-            val rawSsid = info?.ssid?.replace("\"", "")
-            if (!rawSsid.isNullOrEmpty() && rawSsid != "<unknown ssid>") {
-                ssidInput.setText(rawSsid)
-            }
+            })
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching Wi-Fi SSID: ${e.message}")
+            Log.w(TAG, "BLE Scan: ${e.message}")
         }
     }
 
-    private fun setStatus(msg: String, color: Int = Color.WHITE) {
-        statusText.text = msg
-        statusText.setTextColor(color)
-    }
-
-    private fun resetButtons() {
-        startPairingBtn.isEnabled = true
-        startPairingBtn.text = "Connect & Provision Device"
-    }
-
-    private fun showDoneButton() {
-        startPairingBtn.text = "Done"
-        startPairingBtn.isEnabled = true
-        startPairingBtn.setOnClickListener { finishWithResult(true) }
-    }
-
-    private fun finishWithResult(success: Boolean) {
+    private fun stopNearbyBleScan() {
         try {
-            activator?.stop()
-            activator?.onDestroy()
-        } catch (_: Exception) {}
-        setResult(if (success) RESULT_OK else RESULT_CANCELED)
-        finish()
+            ThingHomeSdk.getBleOperator().stopLeScan()
+        } catch (e: Exception) {
+            Log.w(TAG, "BLE Stop: ${e.message}")
+        }
     }
 
-    private fun label(text: String) = TextView(this).apply {
-        this.text = text
-        setTextColor(Color.parseColor("#94A3B8"))
-        textSize = 12f
-        setPadding(0, 0, 0, 6)
+    private fun addDiscoveredNearbyDevice(name: String, detail: String) {
+        if (!discoveredDevices.add(name)) return
+        discoveredListContainer.visibility = View.VISIBLE
+        nearbyStatusText.text = "Found ${discoveredDevices.size} nearby device(s)"
+        nearbyStatusText.setTextColor(Color.parseColor("#4ADE80"))
+
+        val item = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.parseColor("#1E293B"))
+            setPadding(24, 20, 24, 20)
+            val params = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = 12
+            }
+            layoutParams = params
+            setOnClickListener {
+                openPairingWizard(name, "??")
+            }
+        }
+
+        val textLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
+        }
+        val nameView = TextView(this).apply {
+            text = name
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            setTypeface(null, Typeface.BOLD)
+        }
+        val detailView = TextView(this).apply {
+            text = detail
+            setTextColor(Color.parseColor("#38BDF8"))
+            textSize = 11f
+        }
+        textLayout.addView(nameView)
+        textLayout.addView(detailView)
+        item.addView(textLayout)
+
+        val pairBtn = Button(this).apply {
+            text = "ADD"
+            setBackgroundColor(Color.parseColor("#38BDF8"))
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            setOnClickListener { openPairingWizard(name, "??") }
+        }
+        item.addView(pairBtn)
+        discoveredListContainer.addView(item)
     }
 
-    private fun spacer(dp: Int) = View(this).apply {
-        layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            (dp * resources.displayMetrics.density).toInt()
+    private fun getConnectedWifiSsid(): String {
+        return try {
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val info: WifiInfo = wifiManager.connectionInfo
+            val raw = info.ssid ?: ""
+            if (raw.startsWith("\"") && raw.endsWith("\"") && raw.length >= 2) {
+                raw.substring(1, raw.length - 1)
+            } else if (raw != "<unknown ssid>") {
+                raw
+            } else {
+                ""
+            }
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    private fun requestPermissionsIfNeeded() {
+        val perms = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.ACCESS_WIFI_STATE,
+            Manifest.permission.CHANGE_WIFI_STATE
         )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            perms.add(Manifest.permission.BLUETOOTH_SCAN)
+            perms.add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+        val needed = perms.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
+        if (needed.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, needed.toTypedArray(), PERMISSION_REQ_CODE)
+        }
+    }
+
+    data class DeviceItem(val name: String, val icon: String, val desc: String)
+
+    // ==========================================
+    // RADAR ANIMATION VIEW
+    // ==========================================
+
+    inner class RadarScanView(context: Context) : View(context) {
+        private var sweepAngle = 0f
+        private val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#1E293B")
+            style = Paint.Style.STROKE
+            strokeWidth = 3f
+        }
+        private val centerDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#38BDF8")
+            style = Paint.Style.FILL
+        }
+        private val sweepPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+        }
+
+        init {
+            ValueAnimator.ofFloat(0f, 360f).apply {
+                duration = 2400L
+                repeatCount = ValueAnimator.INFINITE
+                interpolator = LinearInterpolator()
+                addUpdateListener {
+                    sweepAngle = it.animatedValue as Float
+                    invalidate()
+                }
+                start()
+            }
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val cx = width / 2f
+            val cy = height / 2f
+            val maxRadius = (Math.min(width, height) / 2f) - 10f
+
+            // Concentric Rings
+            canvas.drawCircle(cx, cy, maxRadius * 0.35f, circlePaint)
+            canvas.drawCircle(cx, cy, maxRadius * 0.70f, circlePaint)
+            canvas.drawCircle(cx, cy, maxRadius, circlePaint)
+
+            // Radar Sweep Gradient
+            val shader = SweepGradient(
+                cx, cy,
+                intArrayOf(Color.TRANSPARENT, Color.parseColor("#4D38BDF8"), Color.parseColor("#CC38BDF8")),
+                floatArrayOf(0.0f, 0.75f, 1.0f)
+            )
+            val matrix = Matrix().apply { postRotate(sweepAngle, cx, cy) }
+            shader.setLocalMatrix(matrix)
+            sweepPaint.shader = shader
+
+            canvas.drawCircle(cx, cy, maxRadius, sweepPaint)
+            canvas.drawCircle(cx, cy, 10f, centerDotPaint)
+        }
     }
 }
