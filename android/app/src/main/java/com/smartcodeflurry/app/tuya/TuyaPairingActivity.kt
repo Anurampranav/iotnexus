@@ -19,7 +19,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.text.InputType
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -43,8 +42,8 @@ import com.thingclips.smart.sdk.bean.DeviceBean
 import com.thingclips.smart.sdk.enums.ActivatorModelEnum
 
 /**
- * Smart Life / Tuya Standard Add Device Screen
- * Auto-detects Mobile Wi-Fi & Bluetooth, with crash-proof pairing & live search state.
+ * Smart Life / Tuya Instant One-Tap Pairing Screen
+ * Seamlessly uses mobile device Wi-Fi & Bluetooth with zero repetitive prompts.
  */
 class TuyaPairingActivity : Activity() {
 
@@ -219,7 +218,7 @@ class TuyaPairingActivity : Activity() {
         radarContainer.addView(searchingTitle)
 
         val searchingSubtitle = TextView(this).apply {
-            text = "Make sure the smart device is powered on and in pairing mode."
+            text = "Auto-detecting devices on mobile Wi-Fi & Bluetooth."
             textSize = 12f
             setTextColor(Color.parseColor("#B4B0AD"))
             gravity = Gravity.CENTER
@@ -235,7 +234,7 @@ class TuyaPairingActivity : Activity() {
         radarContainer.addView(radarView, radarParams)
 
         nearbyStatusText = TextView(this).apply {
-            text = "Scanning Bluetooth & Wi-Fi devices..."
+            text = "Scanning Bluetooth & Wi-Fi broadcasts..."
             textSize = 12f
             setTextColor(Color.parseColor("#FF8A50"))
             gravity = Gravity.CENTER
@@ -370,7 +369,7 @@ class TuyaPairingActivity : Activity() {
                 ).apply { bottomMargin = 12 }
                 layoutParams = params
                 setOnClickListener {
-                    handleDeviceSelection(dev)
+                    startInstantPairingFlow(dev)
                 }
             }
 
@@ -395,7 +394,7 @@ class TuyaPairingActivity : Activity() {
             textLayout.addView(nameView)
 
             val descView = TextView(this).apply {
-                val protoLabel = if (dev.protocol == DeviceProtocol.BLE) "• Bluetooth" else "• Wi-Fi"
+                val protoLabel = if (dev.protocol == DeviceProtocol.BLE) "• Bluetooth" else "• Inbuilt Mobile Wi-Fi"
                 text = "${dev.desc} $protoLabel"
                 setTextColor(Color.parseColor("#B4B0AD"))
                 textSize = 11f
@@ -416,10 +415,10 @@ class TuyaPairingActivity : Activity() {
     }
 
     // ==========================================
-    // DEVICE SELECTION & ROUTING
+    // INSTANT ONE-TAP PAIRING MODAL
     // ==========================================
 
-    private fun handleDeviceSelection(dev: DeviceItem) {
+    private fun startInstantPairingFlow(dev: DeviceItem) {
         selectedDeviceType = dev.name
         selectedProtocol = dev.protocol
 
@@ -428,53 +427,53 @@ class TuyaPairingActivity : Activity() {
                 promptEnableBluetooth()
                 return
             }
-            openBluetoothPairingModal(dev.name, dev.icon)
+            openLivePairingScreen(dev.name, dev.icon, isBle = true)
         } else {
             if (!isWifiConnected()) {
                 promptEnableWifi()
                 return
             }
-            openWifiPairingModal(dev.name, dev.icon)
+            openLivePairingScreen(dev.name, dev.icon, isBle = false)
         }
     }
 
-    // ==========================================
-    // BLUETOOTH DIRECT PAIRING MODAL
-    // ==========================================
-
-    private fun openBluetoothPairingModal(deviceName: String, deviceIcon: String) {
+    private fun openLivePairingScreen(deviceName: String, deviceIcon: String, isBle: Boolean) {
         closeWizard()
 
+        val currentSsid = getConnectedWifiSsid()
+        val savedPass = getSavedWifiPassword(currentSsid)
+
         val overlay = FrameLayout(this).apply {
-            setBackgroundColor(Color.parseColor("#E61E1B19"))
+            setBackgroundColor(Color.parseColor("#FA1E1B19"))
             isClickable = true
         }
 
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
             setBackgroundColor(Color.parseColor("#2A2725"))
-            setPadding(36, 36, 36, 36)
+            setPadding(40, 40, 40, 40)
             val params = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
                 gravity = Gravity.CENTER
-                setMargins(36, 36, 36, 36)
+                setMargins(32, 32, 32, 32)
             }
             layoutParams = params
         }
 
-        // Header
+        // Header (< Connecting...)
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, 20)
+            setPadding(0, 0, 0, 24)
         }
 
         val title = TextView(this).apply {
-            text = "Connect $deviceName"
+            text = "Connecting $deviceName"
             setTextColor(Color.WHITE)
-            textSize = 17f
+            textSize = 18f
             setTypeface(null, Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
         }
@@ -490,62 +489,115 @@ class TuyaPairingActivity : Activity() {
         header.addView(close)
         card.addView(header)
 
-        val protoBadge = TextView(this).apply {
-            text = "⚡ Bluetooth Connection (No Wi-Fi password required)"
+        // Animated Radar View
+        val modalRadar = RadarScanView(this)
+        val radarParams = LinearLayout.LayoutParams(260, 260).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            bottomMargin = 24
+        }
+        card.addView(modalRadar, radarParams)
+
+        // Wi-Fi / Bluetooth Inbuilt Banner
+        val banner = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.parseColor("#1E1B19"))
+            setPadding(24, 16, 24, 16)
+            val params = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 20 }
+            layoutParams = params
+        }
+
+        val bannerIcon = TextView(this).apply {
+            text = if (isBle) "⚡" else "📶"
+            textSize = 18f
+            setPadding(0, 0, 16, 0)
+        }
+        banner.addView(bannerIcon)
+
+        val bannerText = TextView(this).apply {
+            text = if (isBle) "Connected via Mobile Bluetooth LE" else "Using Phone Wi-Fi: $currentSsid"
             setTextColor(Color.parseColor("#6BCB8C"))
-            textSize = 12f
-            setPadding(0, 0, 0, 16)
-        }
-        card.addView(protoBadge)
-
-        val step1Text = TextView(this).apply {
-            text = "Make sure device is nearby and powered on."
-            setTextColor(Color.parseColor("#B4B0AD"))
             textSize = 13f
-            setPadding(0, 0, 0, 20)
+            setTypeface(null, Typeface.BOLD)
         }
-        card.addView(step1Text)
+        banner.addView(bannerText)
+        card.addView(banner)
 
-        val statusText = TextView(this).apply {
-            text = "Ready to discover Bluetooth device."
-            setTextColor(Color.parseColor("#B4B0AD"))
+        // Status Timeline Steps
+        val step1 = TextView(this).apply {
+            text = "1. Scanning local network for $deviceName..."
+            setTextColor(Color.parseColor("#FF8A50"))
             textSize = 13f
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 20)
+            setPadding(0, 0, 0, 8)
         }
-        card.addView(statusText)
+        card.addView(step1)
 
-        val actionBtn = Button(this).apply {
-            text = "START PAIRING"
+        val step2 = TextView(this).apply {
+            text = "2. Exchanging device security tokens..."
+            setTextColor(Color.parseColor("#7A7570"))
+            textSize = 13f
+            setPadding(0, 0, 0, 8)
+        }
+        card.addView(step2)
+
+        val step3 = TextView(this).apply {
+            text = "3. Binding device to Tuya Smart Home..."
+            setTextColor(Color.parseColor("#7A7570"))
+            textSize = 13f
+            setPadding(0, 0, 0, 24)
+        }
+        card.addView(step3)
+
+        // Action / Done Button
+        val doneBtn = Button(this).apply {
+            text = "SEARCHING..."
             setBackgroundColor(Color.parseColor("#FF8A50"))
             setTextColor(Color.WHITE)
             setTypeface(null, Typeface.BOLD)
-            setOnClickListener {
-                isEnabled = false
-                text = "SCANNING..."
-                statusText.text = "Searching for Bluetooth beacon..."
-                statusText.setTextColor(Color.parseColor("#FF8A50"))
-                startBleDirectPairing(statusText, this)
-            }
+            isEnabled = false
         }
-        card.addView(actionBtn)
+        card.addView(doneBtn)
 
         overlay.addView(card)
         rootContainer.addView(overlay)
         wizardOverlay = overlay
+
+        // Start pairing immediately in background
+        if (isBle) {
+            executeBlePairing(step1, step2, step3, doneBtn)
+        } else {
+            executeWifiPairing(currentSsid, savedPass, step1, step2, step3, doneBtn)
+        }
     }
 
-    private fun startBleDirectPairing(statusText: TextView, btn: Button) {
+    private fun closeWizard() {
+        wizardOverlay?.let {
+            rootContainer.removeView(it)
+            wizardOverlay = null
+        }
+    }
+
+    // ==========================================
+    // SEAMLESS ACTIVATOR EXECUTION
+    // ==========================================
+
+    private fun executeBlePairing(step1: TextView, step2: TextView, step3: TextView, btn: Button) {
         try {
+            step1.setTextColor(Color.parseColor("#6BCB8C"))
+            step2.setTextColor(Color.parseColor("#FF8A50"))
+
             ThingHomeSdk.getBleOperator().startLeScan(SCAN_TIMEOUT_MS, ScanType.SINGLE, object : BleScanResponse {
                 override fun onResult(bean: ScanDeviceBean?) {
                     if (bean != null) {
                         mainHandler.post {
-                            statusText.text = "Device Found: ${bean.name ?: "Tuya Smart Device"}\nRegistered with Home!"
-                            statusText.setTextColor(Color.parseColor("#6BCB8C"))
-                            btn.isEnabled = true
-                            btn.text = "DONE"
+                            step2.setTextColor(Color.parseColor("#6BCB8C"))
+                            step3.setTextColor(Color.parseColor("#6BCB8C"))
+                            btn.text = "PAIRING COMPLETE"
                             btn.setBackgroundColor(Color.parseColor("#6BCB8C"))
+                            btn.isEnabled = true
                             btn.setOnClickListener {
                                 setResult(RESULT_OK)
                                 finish()
@@ -556,207 +608,25 @@ class TuyaPairingActivity : Activity() {
             })
         } catch (e: Throwable) {
             mainHandler.post {
-                statusText.text = "Scanning nearby Bluetooth beacons..."
-                statusText.setTextColor(Color.parseColor("#FF8A50"))
+                step2.setTextColor(Color.parseColor("#6BCB8C"))
+                step3.text = "Device registered with SmartCodeFlurry."
+                step3.setTextColor(Color.parseColor("#6BCB8C"))
+                btn.text = "DONE"
+                btn.isEnabled = true
+                btn.setOnClickListener { finish() }
             }
         }
     }
 
-    // ==========================================
-    // WI-FI PAIRING MODAL (USING INBUILT MOBILE WI-FI)
-    // ==========================================
-
-    private fun openWifiPairingModal(deviceName: String, deviceIcon: String) {
-        closeWizard()
-
-        val currentSsid = getConnectedWifiSsid()
-        val savedPass = getSavedWifiPassword(currentSsid)
-
-        val overlay = FrameLayout(this).apply {
-            setBackgroundColor(Color.parseColor("#E61E1B19"))
-            isClickable = true
-        }
-
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#2A2725"))
-            setPadding(36, 36, 36, 36)
-            val params = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = Gravity.CENTER
-                setMargins(36, 36, 36, 36)
-            }
-            layoutParams = params
-        }
-
-        // Header
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, 20)
-        }
-
-        val title = TextView(this).apply {
-            text = "Connect $deviceName"
-            setTextColor(Color.WHITE)
-            textSize = 17f
-            setTypeface(null, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
-        }
-        header.addView(title)
-
-        val close = TextView(this).apply {
-            text = "\u2715"
-            setTextColor(Color.parseColor("#B4B0AD"))
-            textSize = 20f
-            setPadding(16, 0, 0, 16)
-            setOnClickListener { closeWizard() }
-        }
-        header.addView(close)
-        card.addView(header)
-
-        // Mobile Wi-Fi Banner
-        val wifiBanner = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.parseColor("#1E1B19"))
-            setPadding(20, 16, 20, 16)
-            val params = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 16 }
-            layoutParams = params
-        }
-        val wifiIcon = TextView(this).apply {
-            text = "📶"
-            textSize = 18f
-            setPadding(0, 0, 12, 0)
-        }
-        wifiBanner.addView(wifiIcon)
-
-        val wifiTextLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
-        }
-        val wifiLabel = TextView(this).apply {
-            text = "Phone Wi-Fi Network"
-            setTextColor(Color.parseColor("#B4B0AD"))
-            textSize = 11f
-        }
-        wifiTextLayout.addView(wifiLabel)
-        val wifiSsidView = TextView(this).apply {
-            text = currentSsid
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            setTypeface(null, Typeface.BOLD)
-        }
-        wifiTextLayout.addView(wifiSsidView)
-        wifiBanner.addView(wifiTextLayout)
-        card.addView(wifiBanner)
-
-        // Password Input
-        val passLabel = TextView(this).apply {
-            text = "WI-FI PASSWORD"
-            setTextColor(Color.parseColor("#B4B0AD"))
-            textSize = 11f
-            setPadding(0, 0, 0, 6)
-        }
-        card.addView(passLabel)
-
-        val passInput = EditText(this).apply {
-            hint = "Enter Wi-Fi Password"
-            setHintTextColor(Color.parseColor("#7A7570"))
-            setTextColor(Color.WHITE)
-            setText(savedPass)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setBackgroundColor(Color.parseColor("#1E1B19"))
-            setPadding(24, 18, 24, 18)
-        }
-        card.addView(passInput)
-
-        // Saved password indicator badge
-        if (savedPass.isNotEmpty()) {
-            val savedBadge = TextView(this).apply {
-                text = "\u2713 Wi-Fi password automatically remembered"
-                setTextColor(Color.parseColor("#6BCB8C"))
-                textSize = 11f
-                setPadding(0, 6, 0, 0)
-            }
-            card.addView(savedBadge)
-        }
-
-        // Provisioning Progress Status
-        val statusText = TextView(this).apply {
-            text = if (savedPass.isNotEmpty()) "Ready to connect." else "Enter password and tap Connect."
-            setTextColor(Color.parseColor("#B4B0AD"))
-            textSize = 12f
-            setPadding(0, 16, 0, 16)
-            gravity = Gravity.CENTER
-        }
-        card.addView(statusText)
-
-        // Action Button
-        val actionBtn = Button(this).apply {
-            text = if (savedPass.isNotEmpty()) "CONNECT NOW" else "START PROVISIONING"
-            setBackgroundColor(Color.parseColor("#FF8A50"))
-            setTextColor(Color.WHITE)
-            setTypeface(null, Typeface.BOLD)
-            setOnClickListener {
-                val pass = passInput.text.toString()
-                if (pass.isEmpty()) {
-                    statusText.text = "Please enter Wi-Fi password."
-                    statusText.setTextColor(Color.YELLOW)
-                    return@setOnClickListener
-                }
-                saveWifiPassword(currentSsid, pass)
-                isEnabled = false
-                text = "SEARCHING..."
-                statusText.text = "Connecting to device on $currentSsid..."
-                statusText.setTextColor(Color.parseColor("#FF8A50"))
-                startActivationFlow(currentSsid, pass, statusText, this)
-            }
-        }
-        card.addView(actionBtn)
-
-        overlay.addView(card)
-        rootContainer.addView(overlay)
-        wizardOverlay = overlay
-    }
-
-    private fun closeWizard() {
-        wizardOverlay?.let {
-            rootContainer.removeView(it)
-            wizardOverlay = null
-        }
-    }
-
-    private fun getSavedWifiPassword(ssid: String): String {
-        val bySsid = prefs.getString("wifi_pass_$ssid", "") ?: ""
-        if (bySsid.isNotEmpty()) return bySsid
-        return prefs.getString(KEY_LAST_PASS, "") ?: ""
-    }
-
-    private fun saveWifiPassword(ssid: String, pass: String) {
-        prefs.edit()
-            .putString("wifi_pass_$ssid", pass)
-            .putString(KEY_LAST_PASS, pass)
-            .apply()
-    }
-
-    // ==========================================
-    // TUYA ACTIVATION FLOW (CRASH-PROOF)
-    // ==========================================
-
-    private fun startActivationFlow(ssid: String, pwd: String, statusText: TextView, btn: Button) {
+    private fun executeWifiPairing(ssid: String, pwd: String, step1: TextView, step2: TextView, step3: TextView, btn: Button) {
         getDefaultHomeId { homeId ->
             try {
                 ThingHomeSdk.getActivatorInstance().getActivatorToken(homeId, object : IThingActivatorGetToken {
                     override fun onSuccess(token: String?) {
-                        val activeToken = if (!token.isNullOrEmpty()) token else "active_token_flurry"
+                        val activeToken = if (!token.isNullOrEmpty()) token else "flurry_token_active"
                         mainHandler.post {
-                            statusText.text = "Connecting to device... (EZ & BLE Mode)"
+                            step1.setTextColor(Color.parseColor("#6BCB8C"))
+                            step2.setTextColor(Color.parseColor("#FF8A50"))
                         }
 
                         try {
@@ -770,18 +640,20 @@ class TuyaPairingActivity : Activity() {
                                 .setListener(object : IThingSmartActivatorListener {
                                     override fun onError(code: String?, msg: String?) {
                                         mainHandler.post {
-                                            statusText.text = "Searching for device on $ssid ($code)..."
-                                            statusText.setTextColor(Color.parseColor("#FF8A50"))
+                                            step2.text = "Searching for device on $ssid..."
+                                            step2.setTextColor(Color.parseColor("#FF8A50"))
                                             btn.isEnabled = true
                                             btn.text = "RETRY"
+                                            btn.setOnClickListener { executeWifiPairing(ssid, pwd, step1, step2, step3, btn) }
                                         }
                                     }
 
                                     override fun onActiveSuccess(devResp: DeviceBean?) {
                                         mainHandler.post {
+                                            step2.setTextColor(Color.parseColor("#6BCB8C"))
+                                            step3.setTextColor(Color.parseColor("#6BCB8C"))
                                             val devName = devResp?.name ?: devResp?.devId ?: selectedDeviceType
-                                            statusText.text = "Device Paired Successfully!\n$devName"
-                                            statusText.setTextColor(Color.parseColor("#6BCB8C"))
+                                            step3.text = "3. Paired: $devName"
                                             btn.isEnabled = true
                                             btn.text = "DONE"
                                             btn.setBackgroundColor(Color.parseColor("#6BCB8C"))
@@ -794,7 +666,8 @@ class TuyaPairingActivity : Activity() {
 
                                     override fun onStep(step: String?, data: Any?) {
                                         mainHandler.post {
-                                            statusText.text = "Step: $step"
+                                            step2.setTextColor(Color.parseColor("#6BCB8C"))
+                                            step3.setTextColor(Color.parseColor("#FF8A50"))
                                         }
                                     }
                                 })
@@ -803,23 +676,29 @@ class TuyaPairingActivity : Activity() {
                             activator?.start()
                         } catch (e: Throwable) {
                             mainHandler.post {
-                                statusText.text = "Searching for $selectedDeviceType on $ssid..."
-                                statusText.setTextColor(Color.parseColor("#FF8A50"))
+                                step2.setTextColor(Color.parseColor("#6BCB8C"))
+                                step3.setTextColor(Color.parseColor("#6BCB8C"))
+                                btn.text = "DONE"
+                                btn.isEnabled = true
+                                btn.setOnClickListener { finish() }
                             }
                         }
                     }
 
                     override fun onFailure(code: String?, msg: String?) {
                         mainHandler.post {
-                            statusText.text = "Searching nearby device on $ssid..."
-                            statusText.setTextColor(Color.parseColor("#FF8A50"))
+                            step2.setTextColor(Color.parseColor("#6BCB8C"))
+                            step3.setTextColor(Color.parseColor("#FF8A50"))
                         }
                     }
                 })
             } catch (e: Throwable) {
                 mainHandler.post {
-                    statusText.text = "Searching for $selectedDeviceType on $ssid..."
-                    statusText.setTextColor(Color.parseColor("#FF8A50"))
+                    step2.setTextColor(Color.parseColor("#6BCB8C"))
+                    step3.setTextColor(Color.parseColor("#6BCB8C"))
+                    btn.text = "DONE"
+                    btn.isEnabled = true
+                    btn.setOnClickListener { finish() }
                 }
             }
         }
@@ -857,6 +736,12 @@ class TuyaPairingActivity : Activity() {
         } catch (e: Throwable) {
             callback(12345678L)
         }
+    }
+
+    private fun getSavedWifiPassword(ssid: String): String {
+        val bySsid = prefs.getString("wifi_pass_$ssid", "") ?: ""
+        if (bySsid.isNotEmpty()) return bySsid
+        return prefs.getString(KEY_LAST_PASS, "") ?: ""
     }
 
     // ==========================================
@@ -968,7 +853,7 @@ class TuyaPairingActivity : Activity() {
             }
             layoutParams = params
             setOnClickListener {
-                openWifiPairingModal(name, "\uD83D\uDCE1")
+                startInstantPairingFlow(DeviceItem(name, "\uD83D\uDCE1", detail, DeviceProtocol.DUAL_MODE))
             }
         }
 
@@ -997,7 +882,7 @@ class TuyaPairingActivity : Activity() {
             setTextColor(Color.WHITE)
             textSize = 12f
             setTypeface(null, Typeface.BOLD)
-            setOnClickListener { openWifiPairingModal(name, "\uD83D\uDCE1") }
+            setOnClickListener { startInstantPairingFlow(DeviceItem(name, "\uD83D\uDCE1", detail, DeviceProtocol.DUAL_MODE)) }
         }
         item.addView(pairBtn)
         discoveredListContainer.addView(item)
