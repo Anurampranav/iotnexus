@@ -8,6 +8,7 @@ import { GlassButton } from '@components/glass/GlassButton';
 import { EmptyState } from '@components/shared/EmptyState';
 import { Colors, Typography, Spacing, Radius } from '@design/tokens';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { DeviceType } from '@models/device';
 import { Tuya } from '../../src/native/Tuya';
 
