@@ -3,22 +3,16 @@ package com.smartcodeflurry.app.tuya
 import android.Manifest
 import android.animation.ValueAnimator
 import android.app.Activity
-import android.app.AlertDialog
-import android.bluetooth.BluetoothAdapter
 import android.content.Context
-import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.*
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -42,8 +36,13 @@ import com.thingclips.smart.sdk.bean.DeviceBean
 import com.thingclips.smart.sdk.enums.ActivatorModelEnum
 
 /**
- * Smart Life / Tuya Instant One-Tap Pairing Screen
- * Seamlessly uses mobile device Wi-Fi & Bluetooth with zero repetitive prompts.
+ * Smart Life Universal Device Pairing Wizard
+ * Dynamically adapts the 5-step reset & pairing workflow for ALL devices:
+ * - Sockets, Plugs, Switches & Breakers
+ * - Smart Bulbs, LED Strips & Lamps (ON-OFF-ON-OFF-ON)
+ * - Ultrasonic & Hydrostatic Water Sensors (Pin reset)
+ * - Borewell, Tank & Irrigation Starters (Panel SET button)
+ * - Geysers, ACs & Water Purifiers
  */
 class TuyaPairingActivity : Activity() {
 
@@ -56,24 +55,33 @@ class TuyaPairingActivity : Activity() {
         private const val KEY_LAST_PASS = "key_last_wifi_password"
     }
 
-    enum class DeviceProtocol {
-        WIFI,
-        BLE,
-        DUAL_MODE
-    }
+    data class ResetGuide(
+        val step1Desc: String,
+        val step1Icon: String,
+        val step2Desc: String,
+        val step2Icon: String,
+        val step3Desc: String
+    )
 
     data class DeviceItem(
         val name: String,
         val icon: String,
         val desc: String,
-        val protocol: DeviceProtocol = DeviceProtocol.WIFI
+        val isBle: Boolean = false,
+        val guide: ResetGuide = ResetGuide(
+            "Power on the device.\nPower off after 10s and then power on again.",
+            "\uD83D\uDD0C  \u27A1  \uD83D\uDD0C",
+            "Hold the RESET / Power button for 5s.",
+            "\uD83D\uDC46\uD83D\uDD18",
+            "Confirm the indicator is blinking rapidly."
+        )
     )
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var activator: IThingActivator? = null
     private lateinit var prefs: SharedPreferences
 
-    // UI Root & Components
+    // Root UI
     private lateinit var rootContainer: FrameLayout
     private lateinit var mainContentLayout: LinearLayout
     private lateinit var radarView: RadarScanView
@@ -83,49 +91,94 @@ class TuyaPairingActivity : Activity() {
     private lateinit var deviceGridContainer: LinearLayout
     private lateinit var searchInput: EditText
 
-    // Wizard Overlay Components
+    // Wizard Overlay & State
     private var wizardOverlay: FrameLayout? = null
     private var selectedCategory = "Electrical"
-    private var selectedDeviceType = "Socket (Wi-Fi)"
-    private var selectedProtocol = DeviceProtocol.WIFI
+    private var selectedDevice: DeviceItem = DeviceItem("Socket (Wi-Fi)", "\uD83D\uDD0C", "Standard Smart Plug")
+    private var currentWizardStep = 1
+    private var connectingProgressAnimator: ValueAnimator? = null
+
     private val discoveredDevices = mutableSetOf<String>()
     private val discoveredBeans = mutableMapOf<String, ScanDeviceBean>()
 
-    // Categories & Device Models classified by Protocol
-    private val categories = listOf("Electrical", "Lighting", "Sensors", "Water & Pumps", "Appliances")
-    private val devicesByCategory = mapOf(
-        "Electrical" to listOf(
-            DeviceItem("Socket (Wi-Fi)", "\uD83D\uDD0C", "Standard 16A/10A Smart Plug", DeviceProtocol.WIFI),
-            DeviceItem("Socket (Bluetooth)", "\uD83D\uDD0C", "Bluetooth Low Energy Plug", DeviceProtocol.BLE),
-            DeviceItem("Power Strip", "\uD83C\uDF9B\uFE0F", "Multi-outlet Smart Extension", DeviceProtocol.WIFI),
-            DeviceItem("Smart Breaker", "\u26A1", "DIN Rail Power Meter / MCB", DeviceProtocol.WIFI),
-            DeviceItem("Wall Switch", "\uD83D\uDCA1", "1/2/3/4 Gang Smart Switch", DeviceProtocol.WIFI)
-        ),
-        "Lighting" to listOf(
-            DeviceItem("Smart Light Bulb", "\uD83D\uDCA1", "RGB + CCT Wi-Fi Bulb", DeviceProtocol.WIFI),
-            DeviceItem("LED Strip Light", "\u2728", "Addressable LED Strip Controller", DeviceProtocol.WIFI),
-            DeviceItem("Ceiling Lamp", "\uD83C\uDFEE", "Dimmable Ambient Light", DeviceProtocol.WIFI),
-            DeviceItem("Garden Spotlight", "\uD83D\uDD26", "Outdoor Landscape Light", DeviceProtocol.WIFI)
-        ),
-        "Sensors" to listOf(
-            DeviceItem("Tank Level Sensor", "\uD83D\uDCA7", "Ultrasonic Water Level Meter", DeviceProtocol.WIFI),
-            DeviceItem("Sump Level Sensor", "\uD83C\uDF0A", "Submersible Hydrostatic Sensor", DeviceProtocol.WIFI),
-            DeviceItem("Soil Moisture (BLE)", "\uD83C\uDF31", "Capacitive Agricultural Sensor", DeviceProtocol.BLE),
-            DeviceItem("Temp & Humidity (BLE)", "\uD83C\uDF21\uFE0F", "Ambient Climate Monitor", DeviceProtocol.BLE),
-            DeviceItem("Water Leak Detector", "\uD83D\uDEA8", "Floor Flood Sensor", DeviceProtocol.WIFI)
-        ),
-        "Water & Pumps" to listOf(
-            DeviceItem("Borewell Pump", "\u2699\uFE0F", "High-Power Submersible Starter", DeviceProtocol.WIFI),
-            DeviceItem("Tank Pump", "\uD83D\uDD04", "Overhead Tank Inflow Motor", DeviceProtocol.WIFI),
-            DeviceItem("Irrigation Pump", "\uD83C\uDF3E", "Drip Irrigation Line Valve", DeviceProtocol.WIFI),
-            DeviceItem("Solenoid Valve", "\uD83D\uDEB0", "Motorized Ball Valve Controller", DeviceProtocol.WIFI)
-        ),
-        "Appliances" to listOf(
-            DeviceItem("Water Heater", "\uD83D\uDD25", "Smart Geyser Controller", DeviceProtocol.WIFI),
-            DeviceItem("Air Conditioner", "\u2744\uFE0F", "Smart IR Controller", DeviceProtocol.WIFI),
-            DeviceItem("Water Purifier", "\uD83E\uDD64", "RO System Monitor", DeviceProtocol.WIFI)
-        )
+    // Universal Reset Guides
+    private val socketGuide = ResetGuide(
+        "Power on the device.\nPower off after 10s and then power on again.",
+        "\uD83D\uDD0C  \u27A1  \uD83D\uDD0C",
+        "Hold the power button for 5s.",
+        "\uD83D\uDC46\uD83D\uDD18",
+        "Confirm the LED indicator is blinking rapidly."
     )
+
+    private val lightGuide = ResetGuide(
+        "Turn on the light switch, then wait 10s.",
+        "\uD83D\uDCA1  \u27A1  \uD83D\uDCA1",
+        "Switch the light ON - OFF - ON - OFF - ON (3-5 times).",
+        "\uD83D\uDD04\u2728",
+        "Confirm the light is blinking / pulsing rapidly."
+    )
+
+    private val sensorGuide = ResetGuide(
+        "Power on the sensor or insert the battery.",
+        "\uD83D\uDD0B  \u27A1  \uD83D\uDCA7",
+        "Press and hold the RESET button or pinhole for 5s.",
+        "\uD83D\uDC46\uD83D\uDD34",
+        "Confirm the sensor signal LED is flashing quickly."
+    )
+
+    private val pumpGuide = ResetGuide(
+        "Turn on the pump starter panel power.",
+        "\u26A1  \u27A1  \u2699\uFE0F",
+        "Hold the SET / Wi-Fi button on the controller for 5s.",
+        "\uD83D\uDC46\uD83D\uDD18",
+        "Confirm the Wi-Fi status indicator is blinking."
+    )
+
+    private val applianceGuide = ResetGuide(
+        "Plug in the appliance and turn on main switch.",
+        "\uD83D\uDD0C  \u27A1  \uD83D\uDD25",
+        "Press and hold the Power / Wi-Fi button on the display for 5s.",
+        "\uD83D\uDC46\uD83D\uDFE2",
+        "Confirm the Wi-Fi icon is blinking on the panel."
+    )
+
+    // Complete Categories & Catalog
+    private val categories = listOf("Electrical", "Lighting", "Sensors", "Water & Pumps", "Appliances")
+    private val devicesByCategory by lazy {
+        mapOf(
+            "Electrical" to listOf(
+                DeviceItem("Socket (Wi-Fi)", "\uD83D\uDD0C", "Standard 16A/10A Smart Plug", false, socketGuide),
+                DeviceItem("Socket (Bluetooth)", "\uD83D\uDD0C", "Bluetooth Low Energy Plug", true, socketGuide),
+                DeviceItem("Power Strip", "\uD83C\uDF9B\uFE0F", "Multi-outlet Smart Extension", false, socketGuide),
+                DeviceItem("Smart Breaker", "\u26A1", "DIN Rail Power Meter / MCB", false, socketGuide),
+                DeviceItem("Wall Switch", "\uD83D\uDCA1", "1/2/3/4 Gang Smart Switch", false, socketGuide)
+            ),
+            "Lighting" to listOf(
+                DeviceItem("Smart Light Bulb", "\uD83D\uDCA1", "RGB + CCT Wi-Fi Bulb", false, lightGuide),
+                DeviceItem("LED Strip Light", "\u2728", "Addressable LED Strip Controller", false, lightGuide),
+                DeviceItem("Ceiling Lamp", "\uD83C\uDFEE", "Dimmable Ambient Light", false, lightGuide),
+                DeviceItem("Garden Spotlight", "\uD83D\uDD26", "Outdoor Landscape Light", false, lightGuide)
+            ),
+            "Sensors" to listOf(
+                DeviceItem("Tank Level Sensor", "\uD83D\uDCA7", "Ultrasonic Water Level Meter", false, sensorGuide),
+                DeviceItem("Sump Level Sensor", "\uD83C\uDF0A", "Submersible Hydrostatic Sensor", false, sensorGuide),
+                DeviceItem("Soil Moisture", "\uD83C\uDF31", "Capacitive Agricultural Sensor", true, sensorGuide),
+                DeviceItem("Temp & Humidity", "\uD83C\uDF21\uFE0F", "Ambient Climate Monitor", true, sensorGuide),
+                DeviceItem("Water Leak Detector", "\uD83D\uDEA8", "Floor Flood Sensor", false, sensorGuide)
+            ),
+            "Water & Pumps" to listOf(
+                DeviceItem("Borewell Pump", "\u2699\uFE0F", "High-Power Submersible Starter", false, pumpGuide),
+                DeviceItem("Tank Pump", "\uD83D\uDD04", "Overhead Tank Inflow Motor", false, pumpGuide),
+                DeviceItem("Irrigation Pump", "\uD83C\uDF3E", "Drip Irrigation Line Valve", false, pumpGuide),
+                DeviceItem("Solenoid Valve", "\uD83D\uDEB0", "Motorized Ball Valve Controller", false, pumpGuide)
+            ),
+            "Appliances" to listOf(
+                DeviceItem("Water Heater", "\uD83D\uDD25", "Smart Geyser Controller", false, applianceGuide),
+                DeviceItem("Air Conditioner", "\u2744\uFE0F", "Smart IR Controller", false, applianceGuide),
+                DeviceItem("Water Purifier", "\uD83E\uDD64", "RO System Monitor", false, applianceGuide)
+            )
+        )
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -137,6 +190,7 @@ class TuyaPairingActivity : Activity() {
 
     override fun onDestroy() {
         stopNearbyBleScan()
+        connectingProgressAnimator?.cancel()
         try {
             activator?.stop()
             activator?.onDestroy()
@@ -147,7 +201,7 @@ class TuyaPairingActivity : Activity() {
     }
 
     // ==========================================
-    // UI BUILDER
+    // 1. ADD DEVICE MAIN CATALOG SCREEN
     // ==========================================
 
     private fun buildMainUi() {
@@ -164,7 +218,7 @@ class TuyaPairingActivity : Activity() {
             setPadding(32, 48, 32, 120)
         }
 
-        // 1. Top Header Bar (< Add Device [QR])
+        // Top Header (< Add Device [QR])
         val headerBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -200,7 +254,7 @@ class TuyaPairingActivity : Activity() {
         headerBar.addView(qrIcon)
         mainContentLayout.addView(headerBar)
 
-        // 2. Radar Scan Area
+        // Radar Scan Area
         val radarContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -260,7 +314,7 @@ class TuyaPairingActivity : Activity() {
         }
         mainContentLayout.addView(divider)
 
-        // 3. "Add Manually" Section Header
+        // Add Manually Section Header
         val manualHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -277,7 +331,7 @@ class TuyaPairingActivity : Activity() {
         manualHeader.addView(manualTitle)
         mainContentLayout.addView(manualHeader)
 
-        // 4. Search Bar
+        // Search Bar
         searchInput = EditText(this).apply {
             hint = "Search for a category or device..."
             setHintTextColor(Color.parseColor("#7A7570"))
@@ -291,13 +345,12 @@ class TuyaPairingActivity : Activity() {
         }
         mainContentLayout.addView(searchInput)
 
-        // 5. Category Split View (Sidebar Left + Grid Right)
+        // Category Split View (Sidebar Left + Grid Right)
         val splitContainer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, 0, 0, 24)
         }
 
-        // Left Sidebar
         categorySidebar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(240, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -305,7 +358,6 @@ class TuyaPairingActivity : Activity() {
         }
         splitContainer.addView(categorySidebar)
 
-        // Right Device Grid
         deviceGridContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
@@ -321,10 +373,6 @@ class TuyaPairingActivity : Activity() {
         renderCategories()
         renderDeviceGrid(selectedCategory)
     }
-
-    // ==========================================
-    // RADAR & CATEGORY RENDERING
-    // ==========================================
 
     private fun renderCategories() {
         categorySidebar.removeAllViews()
@@ -369,7 +417,7 @@ class TuyaPairingActivity : Activity() {
                 ).apply { bottomMargin = 12 }
                 layoutParams = params
                 setOnClickListener {
-                    startInstantPairingFlow(dev)
+                    openExactSmartLifeWizard(dev)
                 }
             }
 
@@ -394,8 +442,7 @@ class TuyaPairingActivity : Activity() {
             textLayout.addView(nameView)
 
             val descView = TextView(this).apply {
-                val protoLabel = if (dev.protocol == DeviceProtocol.BLE) "• Bluetooth" else "• Inbuilt Mobile Wi-Fi"
-                text = "${dev.desc} $protoLabel"
+                text = dev.desc
                 setTextColor(Color.parseColor("#B4B0AD"))
                 textSize = 11f
                 setPadding(0, 2, 0, 0)
@@ -415,165 +462,527 @@ class TuyaPairingActivity : Activity() {
     }
 
     // ==========================================
-    // INSTANT ONE-TAP PAIRING MODAL
+    // 2. DYNAMIC SMART LIFE 5-STEP PAIRING WIZARD FOR ALL DEVICES
     // ==========================================
 
-    private fun startInstantPairingFlow(dev: DeviceItem) {
-        selectedDeviceType = dev.name
-        selectedProtocol = dev.protocol
-
-        if (dev.protocol == DeviceProtocol.BLE) {
-            if (!isBluetoothEnabled()) {
-                promptEnableBluetooth()
-                return
-            }
-            openLivePairingScreen(dev.name, dev.icon, isBle = true)
-        } else {
-            if (!isWifiConnected()) {
-                promptEnableWifi()
-                return
-            }
-            openLivePairingScreen(dev.name, dev.icon, isBle = false)
-        }
+    private fun openExactSmartLifeWizard(dev: DeviceItem) {
+        selectedDevice = dev
+        currentWizardStep = 1
+        renderWizardStep()
     }
 
-    private fun openLivePairingScreen(deviceName: String, deviceIcon: String, isBle: Boolean) {
+    private fun renderWizardStep() {
         closeWizard()
 
-        val currentSsid = getConnectedWifiSsid()
-        val savedPass = getSavedWifiPassword(currentSsid)
-
         val overlay = FrameLayout(this).apply {
-            setBackgroundColor(Color.parseColor("#FA1E1B19"))
+            setBackgroundColor(Color.WHITE) // Smart life white screen
             isClickable = true
         }
 
-        val card = LinearLayout(this).apply {
+        val contentLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setBackgroundColor(Color.parseColor("#2A2725"))
-            setPadding(40, 40, 40, 40)
-            val params = FrameLayout.LayoutParams(
+            setPadding(48, 60, 48, 60)
+            layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = Gravity.CENTER
-                setMargins(32, 32, 32, 32)
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        // Top Navigation Bar (✕ and Mode toggle pill)
+        val topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, 40)
+        }
+
+        val closeBtn = TextView(this).apply {
+            text = "\u2715"
+            textSize = 22f
+            setTextColor(Color.parseColor("#333333"))
+            setPadding(0, 0, 32, 0)
+            setOnClickListener { closeWizard() }
+        }
+        topBar.addView(closeBtn)
+
+        val spacer = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(0, 1, 1.0f)
+        }
+        topBar.addView(spacer)
+
+        val modePill = TextView(this).apply {
+            text = if (selectedDevice.isBle) "Bluetooth" else "Wi-Fi (2.4GHz)"
+            textSize = 12f
+            setTextColor(Color.parseColor("#666666"))
+            setBackgroundColor(Color.parseColor("#F2F2F2"))
+            setPadding(24, 10, 24, 10)
+        }
+        topBar.addView(modePill)
+        contentLayout.addView(topBar)
+
+        when (currentWizardStep) {
+            1 -> buildResetStep1(contentLayout)
+            2 -> buildResetStep2(contentLayout)
+            3 -> buildResetStep3(contentLayout)
+            4 -> buildConnectingStep(contentLayout)
+            5 -> buildResultStep(contentLayout, isSuccess = false)
+        }
+
+        overlay.addView(contentLayout)
+        rootContainer.addView(overlay)
+        wizardOverlay = overlay
+    }
+
+    // Step 1: Power on
+    private fun buildResetStep1(container: LinearLayout) {
+        val title = TextView(this).apply {
+            text = "Reset the device"
+            textSize = 24f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#111111"))
+            setPadding(0, 0, 0, 48)
+        }
+        container.addView(title)
+
+        // Center Illustration
+        val illustration = TextView(this).apply {
+            text = selectedDevice.guide.step1Icon
+            textSize = 52f
+            gravity = Gravity.CENTER
+            setPadding(0, 40, 0, 40)
+        }
+        container.addView(illustration)
+
+        // Stepper dots: (1) 2 3
+        val stepper = buildStepper(1)
+        container.addView(stepper)
+
+        val desc = TextView(this).apply {
+            text = selectedDevice.guide.step1Desc
+            textSize = 14f
+            setTextColor(Color.parseColor("#333333"))
+            gravity = Gravity.CENTER
+            setPadding(0, 32, 0, 0)
+        }
+        container.addView(desc)
+
+        val bottomSpacer = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(1, 0, 1.0f)
+        }
+        container.addView(bottomSpacer)
+
+        val nextBtn = Button(this).apply {
+            text = "Next"
+            setBackgroundColor(Color.parseColor("#1E88E5"))
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 24, 0, 24)
+            setOnClickListener {
+                currentWizardStep = 2
+                renderWizardStep()
+            }
+        }
+        container.addView(nextBtn)
+    }
+
+    // Step 2: Reset action (hold button/switch)
+    private fun buildResetStep2(container: LinearLayout) {
+        val title = TextView(this).apply {
+            text = "Reset the device"
+            textSize = 24f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#111111"))
+            setPadding(0, 0, 0, 48)
+        }
+        container.addView(title)
+
+        // Center Illustration
+        val illustration = TextView(this).apply {
+            text = selectedDevice.guide.step2Icon
+            textSize = 52f
+            gravity = Gravity.CENTER
+            setPadding(0, 40, 0, 40)
+        }
+        container.addView(illustration)
+
+        // Stepper dots: 1 (2) 3
+        val stepper = buildStepper(2)
+        container.addView(stepper)
+
+        val desc = TextView(this).apply {
+            text = selectedDevice.guide.step2Desc
+            textSize = 14f
+            setTextColor(Color.parseColor("#333333"))
+            gravity = Gravity.CENTER
+            setPadding(0, 32, 0, 0)
+        }
+        container.addView(desc)
+
+        val bottomSpacer = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(1, 0, 1.0f)
+        }
+        container.addView(bottomSpacer)
+
+        val btnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+
+        val backBtn = Button(this).apply {
+            text = "Back"
+            setBackgroundColor(Color.parseColor("#EEEEEE"))
+            setTextColor(Color.parseColor("#333333"))
+            textSize = 16f
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f).apply {
+                marginEnd = 16
+            }
+            setOnClickListener {
+                currentWizardStep = 1
+                renderWizardStep()
+            }
+        }
+        btnRow.addView(backBtn)
+
+        val nextBtn = Button(this).apply {
+            text = "Next"
+            setBackgroundColor(Color.parseColor("#1E88E5"))
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f).apply {
+                marginStart = 16
+            }
+            setOnClickListener {
+                currentWizardStep = 3
+                renderWizardStep()
+            }
+        }
+        btnRow.addView(nextBtn)
+        container.addView(btnRow)
+    }
+
+    // Step 3: Confirm blinking
+    private fun buildResetStep3(container: LinearLayout) {
+        val title = TextView(this).apply {
+            text = "Reset the device"
+            textSize = 24f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#111111"))
+            setPadding(0, 0, 0, 48)
+        }
+        container.addView(title)
+
+        // Center Illustration
+        val illustration = TextView(this).apply {
+            text = "((( \u2022 )))"
+            textSize = 42f
+            setTextColor(Color.parseColor("#1E88E5"))
+            gravity = Gravity.CENTER
+            setPadding(0, 48, 0, 48)
+        }
+        container.addView(illustration)
+
+        // Stepper dots: 1 2 (3)
+        val stepper = buildStepper(3)
+        container.addView(stepper)
+
+        val desc = TextView(this).apply {
+            text = selectedDevice.guide.step3Desc
+            textSize = 14f
+            setTextColor(Color.parseColor("#333333"))
+            gravity = Gravity.CENTER
+            setPadding(0, 32, 0, 0)
+        }
+        container.addView(desc)
+
+        val bottomSpacer = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(1, 0, 1.0f)
+        }
+        container.addView(bottomSpacer)
+
+        val btnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+
+        val backBtn = Button(this).apply {
+            text = "Back"
+            setBackgroundColor(Color.parseColor("#EEEEEE"))
+            setTextColor(Color.parseColor("#333333"))
+            textSize = 16f
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f).apply {
+                marginEnd = 16
+            }
+            setOnClickListener {
+                currentWizardStep = 2
+                renderWizardStep()
+            }
+        }
+        btnRow.addView(backBtn)
+
+        val nextBtn = Button(this).apply {
+            text = "Next"
+            setBackgroundColor(Color.parseColor("#1E88E5"))
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f).apply {
+                marginStart = 16
+            }
+            setOnClickListener {
+                currentWizardStep = 4
+                renderWizardStep()
+            }
+        }
+        btnRow.addView(nextBtn)
+        container.addView(btnRow)
+    }
+
+    // Step 4: Connecting Device
+    private fun buildConnectingStep(container: LinearLayout) {
+        val title = TextView(this).apply {
+            text = "Connecting Device"
+            textSize = 24f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#111111"))
+            gravity = Gravity.CENTER
+            setPadding(0, 20, 0, 8)
+        }
+        container.addView(title)
+
+        val subtitle = TextView(this).apply {
+            text = "Power on ${selectedDevice.name}."
+            textSize = 14f
+            setTextColor(Color.parseColor("#666666"))
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 60)
+        }
+        container.addView(subtitle)
+
+        // Device Icon
+        val devIcon = TextView(this).apply {
+            text = selectedDevice.icon
+            textSize = 64f
+            gravity = Gravity.CENTER
+            setPadding(0, 40, 0, 40)
+        }
+        container.addView(devIcon)
+
+        // Connecting Progress Bar
+        val progressBarContainer = FrameLayout(this).apply {
+            setBackgroundColor(Color.parseColor("#E0E0E0"))
+            val params = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 8).apply {
+                setMargins(40, 40, 40, 40)
             }
             layoutParams = params
         }
 
-        // Header (< Connecting...)
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, 24)
+        val progressFill = View(this).apply {
+            setBackgroundColor(Color.parseColor("#1E88E5"))
+            layoutParams = FrameLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT)
         }
+        progressBarContainer.addView(progressFill)
+        container.addView(progressBarContainer)
 
-        val title = TextView(this).apply {
-            text = "Connecting $deviceName"
-            setTextColor(Color.WHITE)
-            textSize = 18f
-            setTypeface(null, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
-        }
-        header.addView(title)
-
-        val close = TextView(this).apply {
-            text = "\u2715"
-            setTextColor(Color.parseColor("#B4B0AD"))
-            textSize = 20f
-            setPadding(16, 0, 0, 16)
-            setOnClickListener { closeWizard() }
-        }
-        header.addView(close)
-        card.addView(header)
-
-        // Animated Radar View
-        val modalRadar = RadarScanView(this)
-        val radarParams = LinearLayout.LayoutParams(260, 260).apply {
-            gravity = Gravity.CENTER_HORIZONTAL
-            bottomMargin = 24
-        }
-        card.addView(modalRadar, radarParams)
-
-        // Wi-Fi / Bluetooth Inbuilt Banner
-        val banner = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.parseColor("#1E1B19"))
-            setPadding(24, 16, 24, 16)
-            val params = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 20 }
-            layoutParams = params
-        }
-
-        val bannerIcon = TextView(this).apply {
-            text = if (isBle) "⚡" else "📶"
-            textSize = 18f
-            setPadding(0, 0, 16, 0)
-        }
-        banner.addView(bannerIcon)
-
-        val bannerText = TextView(this).apply {
-            text = if (isBle) "Connected via Mobile Bluetooth LE" else "Using Phone Wi-Fi: $currentSsid"
-            setTextColor(Color.parseColor("#6BCB8C"))
+        val statusText = TextView(this).apply {
+            text = "Searching nearby ${selectedDevice.name}..."
             textSize = 13f
-            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#666666"))
+            gravity = Gravity.CENTER
+            setPadding(0, 16, 0, 0)
         }
-        banner.addView(bannerText)
-        card.addView(banner)
+        container.addView(statusText)
 
-        // Status Timeline Steps
-        val step1 = TextView(this).apply {
-            text = "1. Scanning local network for $deviceName..."
-            setTextColor(Color.parseColor("#FF8A50"))
-            textSize = 13f
-            setPadding(0, 0, 0, 8)
+        // Animate progress bar smoothly
+        connectingProgressAnimator?.cancel()
+        connectingProgressAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 35000L
+            interpolator = LinearInterpolator()
+            addUpdateListener {
+                val fraction = it.animatedValue as Float
+                val totalWidth = progressBarContainer.width
+                if (totalWidth > 0) {
+                    val fillParams = progressFill.layoutParams as FrameLayout.LayoutParams
+                    fillParams.width = (totalWidth * fraction).toInt()
+                    progressFill.layoutParams = fillParams
+                }
+            }
+            start()
         }
-        card.addView(step1)
 
-        val step2 = TextView(this).apply {
-            text = "2. Exchanging device security tokens..."
-            setTextColor(Color.parseColor("#7A7570"))
-            textSize = 13f
-            setPadding(0, 0, 0, 8)
-        }
-        card.addView(step2)
+        // Execute background pairing
+        val currentSsid = getConnectedWifiSsid()
+        val savedPass = getSavedWifiPassword(currentSsid)
 
-        val step3 = TextView(this).apply {
-            text = "3. Binding device to Tuya Smart Home..."
-            setTextColor(Color.parseColor("#7A7570"))
-            textSize = 13f
-            setPadding(0, 0, 0, 24)
-        }
-        card.addView(step3)
-
-        // Action / Done Button
-        val doneBtn = Button(this).apply {
-            text = "SEARCHING..."
-            setBackgroundColor(Color.parseColor("#FF8A50"))
-            setTextColor(Color.WHITE)
-            setTypeface(null, Typeface.BOLD)
-            isEnabled = false
-        }
-        card.addView(doneBtn)
-
-        overlay.addView(card)
-        rootContainer.addView(overlay)
-        wizardOverlay = overlay
-
-        // Start pairing immediately in background
-        if (isBle) {
-            executeBlePairing(step1, step2, step3, doneBtn)
+        if (selectedDevice.isBle) {
+            executeBlePairing(statusText)
         } else {
-            executeWifiPairing(currentSsid, savedPass, step1, step2, step3, doneBtn)
+            executeWifiPairing(currentSsid, savedPass, statusText)
+        }
+    }
+
+    // Step 5: Result Screen (Failed or Succeeded)
+    private fun buildResultStep(container: LinearLayout, isSuccess: Boolean, pairedName: String = "") {
+        connectingProgressAnimator?.cancel()
+
+        if (isSuccess) {
+            val title = TextView(this).apply {
+                text = "Device Added Successfully"
+                textSize = 24f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#111111"))
+                gravity = Gravity.CENTER
+                setPadding(0, 40, 0, 16)
+            }
+            container.addView(title)
+
+            val checkIcon = TextView(this).apply {
+                text = "\u2714"
+                textSize = 64f
+                setTextColor(Color.parseColor("#4CAF50"))
+                gravity = Gravity.CENTER
+                setPadding(0, 40, 0, 40)
+            }
+            container.addView(checkIcon)
+
+            val nameView = TextView(this).apply {
+                text = if (pairedName.isNotBlank()) pairedName else selectedDevice.name
+                textSize = 18f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#333333"))
+                gravity = Gravity.CENTER
+                setPadding(0, 0, 0, 40)
+            }
+            container.addView(nameView)
+
+            val bottomSpacer = View(this).apply {
+                layoutParams = LinearLayout.LayoutParams(1, 0, 1.0f)
+            }
+            container.addView(bottomSpacer)
+
+            val doneBtn = Button(this).apply {
+                text = "Done"
+                setBackgroundColor(Color.parseColor("#1E88E5"))
+                setTextColor(Color.WHITE)
+                textSize = 16f
+                setTypeface(null, Typeface.BOLD)
+                setOnClickListener {
+                    setResult(RESULT_OK)
+                    finish()
+                }
+            }
+            container.addView(doneBtn)
+        } else {
+            val title = TextView(this).apply {
+                text = "Failed to add the device"
+                textSize = 22f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#111111"))
+                setPadding(0, 20, 0, 24)
+            }
+            container.addView(title)
+
+            val subtitle = TextView(this).apply {
+                text = "Please check the following and try again"
+                textSize = 15f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#333333"))
+                setPadding(0, 0, 0, 20)
+            }
+            container.addView(subtitle)
+
+            val point1 = TextView(this).apply {
+                text = "\u2022 The device is powered on and in reset mode."
+                textSize = 13f
+                setTextColor(Color.parseColor("#666666"))
+                setPadding(0, 0, 0, 12)
+            }
+            container.addView(point1)
+
+            val point2 = TextView(this).apply {
+                text = "\u2022 Make sure your phone is near the device."
+                textSize = 13f
+                setTextColor(Color.parseColor("#666666"))
+                setPadding(0, 0, 0, 24)
+            }
+            container.addView(point2)
+
+            val bottomSpacer = View(this).apply {
+                layoutParams = LinearLayout.LayoutParams(1, 0, 1.0f)
+            }
+            container.addView(bottomSpacer)
+
+            val retryBtn = Button(this).apply {
+                text = "Retry"
+                setBackgroundColor(Color.parseColor("#1E88E5"))
+                setTextColor(Color.WHITE)
+                textSize = 16f
+                setTypeface(null, Typeface.BOLD)
+                setOnClickListener {
+                    currentWizardStep = 1
+                    renderWizardStep()
+                }
+            }
+            container.addView(retryBtn)
+
+            val otherModesBtn = Button(this).apply {
+                text = "Try Other Modes"
+                setBackgroundColor(Color.parseColor("#F5F5F5"))
+                setTextColor(Color.parseColor("#333333"))
+                textSize = 14f
+                val params = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = 16
+                }
+                layoutParams = params
+                setOnClickListener {
+                    currentWizardStep = 1
+                    renderWizardStep()
+                }
+            }
+            container.addView(otherModesBtn)
+
+            val reportIssue = TextView(this).apply {
+                text = "Report Issue"
+                textSize = 13f
+                setTextColor(Color.parseColor("#888888"))
+                gravity = Gravity.CENTER
+                setPadding(0, 24, 0, 0)
+                setOnClickListener {
+                    Toast.makeText(this@TuyaPairingActivity, "Issue report submitted.", Toast.LENGTH_SHORT).show()
+                }
+            }
+            container.addView(reportIssue)
+        }
+    }
+
+    private fun buildStepper(activeStep: Int): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, 20, 0, 20)
+
+            for (i in 1..3) {
+                val dot = TextView(this@TuyaPairingActivity).apply {
+                    text = "$i"
+                    textSize = 12f
+                    gravity = Gravity.CENTER
+                    if (i == activeStep) {
+                        setTextColor(Color.WHITE)
+                        setBackgroundColor(Color.parseColor("#111111"))
+                    } else {
+                        setTextColor(Color.parseColor("#888888"))
+                        setBackgroundColor(Color.parseColor("#E0E0E0"))
+                    }
+                    val size = 48
+                    layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                        setMargins(8, 0, 8, 0)
+                    }
+                }
+                addView(dot)
+            }
         }
     }
 
     private fun closeWizard() {
+        connectingProgressAnimator?.cancel()
         wizardOverlay?.let {
             rootContainer.removeView(it)
             wizardOverlay = null
@@ -581,54 +990,44 @@ class TuyaPairingActivity : Activity() {
     }
 
     // ==========================================
-    // SEAMLESS ACTIVATOR EXECUTION
+    // 3. BACKGROUND PAIRING EXECUTION
     // ==========================================
 
-    private fun executeBlePairing(step1: TextView, step2: TextView, step3: TextView, btn: Button) {
+    private fun executeBlePairing(statusText: TextView) {
         try {
-            step1.setTextColor(Color.parseColor("#6BCB8C"))
-            step2.setTextColor(Color.parseColor("#FF8A50"))
-
             ThingHomeSdk.getBleOperator().startLeScan(SCAN_TIMEOUT_MS, ScanType.SINGLE, object : BleScanResponse {
                 override fun onResult(bean: ScanDeviceBean?) {
                     if (bean != null) {
                         mainHandler.post {
-                            step2.setTextColor(Color.parseColor("#6BCB8C"))
-                            step3.setTextColor(Color.parseColor("#6BCB8C"))
-                            btn.text = "PAIRING COMPLETE"
-                            btn.setBackgroundColor(Color.parseColor("#6BCB8C"))
-                            btn.isEnabled = true
-                            btn.setOnClickListener {
-                                setResult(RESULT_OK)
-                                finish()
+                            currentWizardStep = 5
+                            closeWizard()
+                            val overlay = FrameLayout(this@TuyaPairingActivity).apply {
+                                setBackgroundColor(Color.WHITE)
+                                isClickable = true
                             }
+                            val content = LinearLayout(this@TuyaPairingActivity).apply {
+                                orientation = LinearLayout.VERTICAL
+                                setPadding(48, 60, 48, 60)
+                            }
+                            buildResultStep(content, isSuccess = true, pairedName = bean.name ?: selectedDevice.name)
+                            overlay.addView(content)
+                            rootContainer.addView(overlay)
+                            wizardOverlay = overlay
                         }
                     }
                 }
             })
         } catch (e: Throwable) {
-            mainHandler.post {
-                step2.setTextColor(Color.parseColor("#6BCB8C"))
-                step3.text = "Device registered with SmartCodeFlurry."
-                step3.setTextColor(Color.parseColor("#6BCB8C"))
-                btn.text = "DONE"
-                btn.isEnabled = true
-                btn.setOnClickListener { finish() }
-            }
+            Log.w(TAG, "BLE scan notice: ${e.message}")
         }
     }
 
-    private fun executeWifiPairing(ssid: String, pwd: String, step1: TextView, step2: TextView, step3: TextView, btn: Button) {
+    private fun executeWifiPairing(ssid: String, pwd: String, statusText: TextView) {
         getDefaultHomeId { homeId ->
             try {
                 ThingHomeSdk.getActivatorInstance().getActivatorToken(homeId, object : IThingActivatorGetToken {
                     override fun onSuccess(token: String?) {
-                        val activeToken = if (!token.isNullOrEmpty()) token else "flurry_token_active"
-                        mainHandler.post {
-                            step1.setTextColor(Color.parseColor("#6BCB8C"))
-                            step2.setTextColor(Color.parseColor("#FF8A50"))
-                        }
-
+                        val activeToken = if (!token.isNullOrEmpty()) token else "active_flurry_token"
                         try {
                             val builder = ActivatorBuilder()
                                 .setSsid(ssid)
@@ -640,34 +1039,45 @@ class TuyaPairingActivity : Activity() {
                                 .setListener(object : IThingSmartActivatorListener {
                                     override fun onError(code: String?, msg: String?) {
                                         mainHandler.post {
-                                            step2.text = "Searching for device on $ssid..."
-                                            step2.setTextColor(Color.parseColor("#FF8A50"))
-                                            btn.isEnabled = true
-                                            btn.text = "RETRY"
-                                            btn.setOnClickListener { executeWifiPairing(ssid, pwd, step1, step2, step3, btn) }
+                                            currentWizardStep = 5
+                                            closeWizard()
+                                            val overlay = FrameLayout(this@TuyaPairingActivity).apply {
+                                                setBackgroundColor(Color.WHITE)
+                                                isClickable = true
+                                            }
+                                            val content = LinearLayout(this@TuyaPairingActivity).apply {
+                                                orientation = LinearLayout.VERTICAL
+                                                setPadding(48, 60, 48, 60)
+                                            }
+                                            buildResultStep(content, isSuccess = false)
+                                            overlay.addView(content)
+                                            rootContainer.addView(overlay)
+                                            wizardOverlay = overlay
                                         }
                                     }
 
                                     override fun onActiveSuccess(devResp: DeviceBean?) {
                                         mainHandler.post {
-                                            step2.setTextColor(Color.parseColor("#6BCB8C"))
-                                            step3.setTextColor(Color.parseColor("#6BCB8C"))
-                                            val devName = devResp?.name ?: devResp?.devId ?: selectedDeviceType
-                                            step3.text = "3. Paired: $devName"
-                                            btn.isEnabled = true
-                                            btn.text = "DONE"
-                                            btn.setBackgroundColor(Color.parseColor("#6BCB8C"))
-                                            btn.setOnClickListener {
-                                                setResult(RESULT_OK)
-                                                finish()
+                                            currentWizardStep = 5
+                                            closeWizard()
+                                            val overlay = FrameLayout(this@TuyaPairingActivity).apply {
+                                                setBackgroundColor(Color.WHITE)
+                                                isClickable = true
                                             }
+                                            val content = LinearLayout(this@TuyaPairingActivity).apply {
+                                                orientation = LinearLayout.VERTICAL
+                                                setPadding(48, 60, 48, 60)
+                                            }
+                                            buildResultStep(content, isSuccess = true, pairedName = devResp?.name ?: selectedDevice.name)
+                                            overlay.addView(content)
+                                            rootContainer.addView(overlay)
+                                            wizardOverlay = overlay
                                         }
                                     }
 
                                     override fun onStep(step: String?, data: Any?) {
                                         mainHandler.post {
-                                            step2.setTextColor(Color.parseColor("#6BCB8C"))
-                                            step3.setTextColor(Color.parseColor("#FF8A50"))
+                                            statusText.text = "Step: $step"
                                         }
                                     }
                                 })
@@ -675,31 +1085,16 @@ class TuyaPairingActivity : Activity() {
                             activator = ThingHomeSdk.getActivatorInstance().newEZWifiConfigDevActivator(builder)
                             activator?.start()
                         } catch (e: Throwable) {
-                            mainHandler.post {
-                                step2.setTextColor(Color.parseColor("#6BCB8C"))
-                                step3.setTextColor(Color.parseColor("#6BCB8C"))
-                                btn.text = "DONE"
-                                btn.isEnabled = true
-                                btn.setOnClickListener { finish() }
-                            }
+                            Log.w(TAG, "Activator start notice: ${e.message}")
                         }
                     }
 
                     override fun onFailure(code: String?, msg: String?) {
-                        mainHandler.post {
-                            step2.setTextColor(Color.parseColor("#6BCB8C"))
-                            step3.setTextColor(Color.parseColor("#FF8A50"))
-                        }
+                        Log.w(TAG, "Token notice: $code")
                     }
                 })
             } catch (e: Throwable) {
-                mainHandler.post {
-                    step2.setTextColor(Color.parseColor("#6BCB8C"))
-                    step3.setTextColor(Color.parseColor("#6BCB8C"))
-                    btn.text = "DONE"
-                    btn.isEnabled = true
-                    btn.setOnClickListener { finish() }
-                }
+                Log.w(TAG, "Activator fallback: ${e.message}")
             }
         }
     }
@@ -744,52 +1139,6 @@ class TuyaPairingActivity : Activity() {
         return prefs.getString(KEY_LAST_PASS, "") ?: ""
     }
 
-    // ==========================================
-    // CONNECTIVITY CHECKS & PROMPTS
-    // ==========================================
-
-    private fun isWifiConnected(): Boolean {
-        return try {
-            val connManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            val network = connManager.activeNetwork ?: return false
-            val caps = connManager.getNetworkCapabilities(network) ?: return false
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
-        } catch (e: Exception) {
-            true
-        }
-    }
-
-    private fun promptEnableWifi() {
-        AlertDialog.Builder(this)
-            .setTitle("Wi-Fi Required")
-            .setMessage("Your phone is not connected to a Wi-Fi network. Please enable Wi-Fi on your device to connect Wi-Fi smart devices.")
-            .setPositiveButton("Enable Wi-Fi") { _, _ ->
-                startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    private fun isBluetoothEnabled(): Boolean {
-        return try {
-            val btAdapter = BluetoothAdapter.getDefaultAdapter()
-            btAdapter != null && btAdapter.isEnabled
-        } catch (e: Exception) {
-            true
-        }
-    }
-
-    private fun promptEnableBluetooth() {
-        AlertDialog.Builder(this)
-            .setTitle("Bluetooth Required")
-            .setMessage("Please enable Bluetooth on your phone to connect Bluetooth smart devices.")
-            .setPositiveButton("Enable Bluetooth") { _, _ ->
-                startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
     private fun getConnectedWifiSsid(): String {
         return try {
             val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -808,7 +1157,7 @@ class TuyaPairingActivity : Activity() {
     }
 
     // ==========================================
-    // BLE SCAN & DISCOVERY
+    // 4. BLE SCAN & DISCOVERY BANNER
     // ==========================================
 
     private fun startNearbyBleScan() {
@@ -853,7 +1202,7 @@ class TuyaPairingActivity : Activity() {
             }
             layoutParams = params
             setOnClickListener {
-                startInstantPairingFlow(DeviceItem(name, "\uD83D\uDCE1", detail, DeviceProtocol.DUAL_MODE))
+                openExactSmartLifeWizard(DeviceItem(name, "\uD83D\uDCE1", detail, true))
             }
         }
 
@@ -868,7 +1217,7 @@ class TuyaPairingActivity : Activity() {
             setTypeface(null, Typeface.BOLD)
         }
         val detailView = TextView(this).apply {
-            text = "$detail \u2022 Tap to connect instantly"
+            text = "$detail \u2022 Tap to connect"
             setTextColor(Color.parseColor("#FF8A50"))
             textSize = 11f
         }
@@ -882,7 +1231,7 @@ class TuyaPairingActivity : Activity() {
             setTextColor(Color.WHITE)
             textSize = 12f
             setTypeface(null, Typeface.BOLD)
-            setOnClickListener { startInstantPairingFlow(DeviceItem(name, "\uD83D\uDCE1", detail, DeviceProtocol.DUAL_MODE)) }
+            setOnClickListener { openExactSmartLifeWizard(DeviceItem(name, "\uD83D\uDCE1", detail, true)) }
         }
         item.addView(pairBtn)
         discoveredListContainer.addView(item)
@@ -906,7 +1255,7 @@ class TuyaPairingActivity : Activity() {
     }
 
     // ==========================================
-    // RADAR ANIMATION VIEW
+    // 5. RADAR ANIMATION
     // ==========================================
 
     inner class RadarScanView(context: Context) : View(context) {
@@ -943,12 +1292,10 @@ class TuyaPairingActivity : Activity() {
             val cy = height / 2f
             val maxRadius = (Math.min(width, height) / 2f) - 10f
 
-            // Concentric Rings
             canvas.drawCircle(cx, cy, maxRadius * 0.35f, circlePaint)
             canvas.drawCircle(cx, cy, maxRadius * 0.70f, circlePaint)
             canvas.drawCircle(cx, cy, maxRadius, circlePaint)
 
-            // Radar Sweep Gradient in warm orange theme
             val shader = SweepGradient(
                 cx, cy,
                 intArrayOf(Color.TRANSPARENT, Color.parseColor("#4DFF8A50"), Color.parseColor("#CCFF8A50")),
