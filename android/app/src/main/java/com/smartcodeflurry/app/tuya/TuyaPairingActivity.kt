@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.text.InputType
 import android.util.Log
 import android.view.Gravity
@@ -25,6 +26,8 @@ import androidx.core.content.ContextCompat
 import com.thingclips.smart.android.ble.api.BleScanResponse
 import com.thingclips.smart.android.ble.api.ScanDeviceBean
 import com.thingclips.smart.android.ble.api.ScanType
+import com.thingclips.smart.android.user.api.ILoginCallback
+import com.thingclips.smart.android.user.bean.User
 import com.thingclips.smart.home.sdk.ThingHomeSdk
 import com.thingclips.smart.home.sdk.bean.HomeBean
 import com.thingclips.smart.home.sdk.builder.ActivatorBuilder
@@ -37,12 +40,7 @@ import com.thingclips.smart.sdk.bean.DeviceBean
 import com.thingclips.smart.sdk.enums.ActivatorModelEnum
 
 /**
- * Smart Life Universal Pairing Wizard
- * Supports 100% reliable pairing for:
- * - Wipro & Smart Life Wi-Fi Bulbs & Lights
- * - Smart Sockets, Plugs & Breakers
- * - Water & Pump Starters
- * - Ultrasonic & Soil Sensors
+ * Smart Life Pairing Wizard with Authenticated Tuya Cloud Session
  */
 class TuyaPairingActivity : Activity() {
 
@@ -81,7 +79,6 @@ class TuyaPairingActivity : Activity() {
     private var activator: IThingActivator? = null
     private lateinit var prefs: SharedPreferences
 
-    // UI elements
     private lateinit var rootContainer: FrameLayout
     private lateinit var mainContentLayout: LinearLayout
     private lateinit var radarView: RadarScanView
@@ -91,10 +88,9 @@ class TuyaPairingActivity : Activity() {
     private lateinit var deviceGridContainer: LinearLayout
     private lateinit var searchInput: EditText
 
-    // Wizard Overlay & State
     private var wizardOverlay: FrameLayout? = null
-    private var selectedCategory = "Electrical"
-    private var selectedDevice: DeviceItem = DeviceItem("Smart Light Bulb", "\uD83D\uDCA1", "RGB + CCT Wi-Fi Bulb")
+    private var selectedCategory = "Lighting"
+    private var selectedDevice: DeviceItem = DeviceItem("Smart Light Bulb", "\uD83D\uDCA1", "Wipro / Tuya RGB+CCT Wi-Fi Bulb")
     private var currentWizardStep = 1
     private var connectingProgressAnimator: ValueAnimator? = null
     private var enteredWifiPassword = ""
@@ -102,7 +98,6 @@ class TuyaPairingActivity : Activity() {
     private val discoveredDevices = mutableSetOf<String>()
     private val discoveredBeans = mutableMapOf<String, ScanDeviceBean>()
 
-    // Reset Guides
     private val socketGuide = ResetGuide(
         "Power on the device.\nPower off after 10s and then power on again.",
         "\uD83D\uDD0C  \u27A1  \uD83D\uDD0C",
@@ -185,6 +180,7 @@ class TuyaPairingActivity : Activity() {
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         buildMainUi()
         requestPermissionsIfNeeded()
+        ensureUserSession {}
         startNearbyBleScan()
     }
 
@@ -201,7 +197,7 @@ class TuyaPairingActivity : Activity() {
     }
 
     // ==========================================
-    // 1. MAIN CATALOG SCREEN
+    // 1. MAIN UI
     // ==========================================
 
     private fun buildMainUi() {
@@ -216,7 +212,6 @@ class TuyaPairingActivity : Activity() {
             setPadding(32, 48, 32, 120)
         }
 
-        // Header (< Add Device)
         val headerBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -252,7 +247,6 @@ class TuyaPairingActivity : Activity() {
         headerBar.addView(qrIcon)
         mainContentLayout.addView(headerBar)
 
-        // Radar Scan Area
         val radarContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -318,7 +312,6 @@ class TuyaPairingActivity : Activity() {
         }
         mainContentLayout.addView(manualTitle)
 
-        // Category Split View
         val splitContainer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, 0, 0, 24)
@@ -431,7 +424,7 @@ class TuyaPairingActivity : Activity() {
     }
 
     // ==========================================
-    // 2. UNIVERSAL 5-STEP SMART LIFE WIZARD
+    // 2. PAIRING WIZARD
     // ==========================================
 
     private fun openPairingWizard(dev: DeviceItem) {
@@ -456,7 +449,6 @@ class TuyaPairingActivity : Activity() {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         }
 
-        // Top Navigation Bar
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -498,7 +490,6 @@ class TuyaPairingActivity : Activity() {
         wizardOverlay = overlay
     }
 
-    // Step 1: Power on & preparation
     private fun buildResetStep1(container: LinearLayout) {
         val title = TextView(this).apply {
             text = "Reset the device"
@@ -547,7 +538,6 @@ class TuyaPairingActivity : Activity() {
         container.addView(nextBtn)
     }
 
-    // Step 2: Reset action (toggle ON-OFF-ON or hold button)
     private fun buildResetStep2(container: LinearLayout) {
         val title = TextView(this).apply {
             text = "Reset the device"
@@ -612,7 +602,6 @@ class TuyaPairingActivity : Activity() {
         container.addView(btnRow)
     }
 
-    // Step 3: Wi-Fi Network & Password Confirmation (Smart Life Standard)
     private fun buildWifiPasswordStep(container: LinearLayout) {
         val title = TextView(this).apply {
             text = "Select 2.4 GHz Wi-Fi"
@@ -633,7 +622,6 @@ class TuyaPairingActivity : Activity() {
 
         val currentSsid = getConnectedWifiSsid()
 
-        // SSID Field
         val ssidLabel = TextView(this).apply {
             text = "Wi-Fi Network Name"
             textSize = 12f
@@ -669,7 +657,6 @@ class TuyaPairingActivity : Activity() {
         ssidBox.addView(ssidText)
         container.addView(ssidBox)
 
-        // Password Field
         val passLabel = TextView(this).apply {
             text = "Wi-Fi Password"
             textSize = 12f
@@ -730,7 +717,6 @@ class TuyaPairingActivity : Activity() {
         container.addView(btnRow)
     }
 
-    // Step 4: Connecting Device (Dual EZ + BLE Activator)
     private fun buildConnectingStep(container: LinearLayout) {
         val title = TextView(this).apply {
             text = "Connecting Device"
@@ -775,7 +761,7 @@ class TuyaPairingActivity : Activity() {
         container.addView(progressBarContainer)
 
         val statusText = TextView(this).apply {
-            text = "Sending Wi-Fi credentials to bulb..."
+            text = "Initiating pairing token..."
             textSize = 13f
             setTextColor(Color.parseColor("#666666"))
             gravity = Gravity.CENTER
@@ -799,12 +785,10 @@ class TuyaPairingActivity : Activity() {
             start()
         }
 
-        // Run Dual Activator (EZ Mode + BLE Mode simultaneously)
         val currentSsid = getConnectedWifiSsid()
         executeDualPairing(currentSsid, enteredWifiPassword, statusText)
     }
 
-    // Step 5: Result Screen
     private fun buildResultStep(container: LinearLayout, isSuccess: Boolean, pairedName: String = "") {
         connectingProgressAnimator?.cancel()
 
@@ -941,8 +925,44 @@ class TuyaPairingActivity : Activity() {
     }
 
     // ==========================================
-    // 3. DUAL PAIRING ENGINE (BLE + EZ UDP)
+    // 3. AUTHENTICATED PAIRING EXECUTION
     // ==========================================
+
+    private fun ensureUserSession(callback: (Long) -> Unit) {
+        val userInstance = ThingHomeSdk.getUserInstance()
+        if (userInstance != null && userInstance.isLogin) {
+            getDefaultHomeId(callback)
+            return
+        }
+
+        val deviceId = try {
+            Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "vivo_user"
+        } catch (e: Exception) {
+            "vivo_user"
+        }
+        val uid = "smartcodeflurry_" + deviceId.take(8)
+        val password = "FlurryUser123!"
+        val countryCode = "91"
+
+        userInstance?.loginOrRegisterWithUid(countryCode, uid, password, object : ILoginCallback {
+            override fun onSuccess(user: User?) {
+                Log.d(TAG, "Tuya User session authenticated: ${user?.uid}")
+                getDefaultHomeId(callback)
+            }
+            override fun onError(code: String?, msg: String?) {
+                Log.w(TAG, "loginOrRegisterWithUid notice ($code: $msg), attempting direct login")
+                userInstance.loginWithUid(countryCode, uid, password, object : ILoginCallback {
+                    override fun onSuccess(user: User?) {
+                        getDefaultHomeId(callback)
+                    }
+                    override fun onError(c: String?, m: String?) {
+                        Log.e(TAG, "User session fallback: $c -> $m")
+                        getDefaultHomeId(callback)
+                    }
+                })
+            }
+        }) ?: getDefaultHomeId(callback)
+    }
 
     private fun executeDualPairing(ssid: String, pwd: String, statusText: TextView) {
         var isSuccessHandled = false
@@ -980,28 +1000,30 @@ class TuyaPairingActivity : Activity() {
             Log.w(TAG, "BLE Scan: ${e.message}")
         }
 
-        // 2. Run EZ Wi-Fi Broadcast Activator
-        getDefaultHomeId { homeId ->
+        // 2. Ensure session, then fetch valid cloud token and start EZ Activator
+        ensureUserSession { homeId ->
             try {
+                mainHandler.post { statusText.text = "Fetching cloud registration token..." }
                 ThingHomeSdk.getActivatorInstance().getActivatorToken(homeId, object : IThingActivatorGetToken {
                     override fun onSuccess(token: String?) {
-                        val activeToken = if (!token.isNullOrEmpty()) token else "flurry_ez_token"
+                        if (token.isNullOrEmpty()) {
+                            Log.w(TAG, "Received empty token")
+                            return
+                        }
+                        Log.d(TAG, "Valid Tuya Cloud Token received: $token")
+                        mainHandler.post { statusText.text = "Broadcasting to ${selectedDevice.name}..." }
+
                         try {
                             val builder = ActivatorBuilder()
                                 .setSsid(ssid)
                                 .setPassword(pwd)
-                                .setToken(activeToken)
+                                .setToken(token)
                                 .setTimeOut(TIMEOUT_SECONDS)
                                 .setContext(this@TuyaPairingActivity)
                                 .setActivatorModel(ActivatorModelEnum.THING_EZ)
                                 .setListener(object : IThingSmartActivatorListener {
                                     override fun onError(code: String?, msg: String?) {
-                                        Log.w(TAG, "EZ Activator error: $code -> $msg")
-                                        if (!isSuccessHandled) {
-                                            mainHandler.post {
-                                                statusText.text = "Retrying broadcast..."
-                                            }
-                                        }
+                                        Log.w(TAG, "EZ Activator notice: $code -> $msg")
                                     }
 
                                     override fun onActiveSuccess(devResp: DeviceBean?) {
@@ -1023,7 +1045,8 @@ class TuyaPairingActivity : Activity() {
                     }
 
                     override fun onFailure(code: String?, msg: String?) {
-                        Log.w(TAG, "Token notice: $code")
+                        Log.w(TAG, "Token request notice: $code -> $msg")
+                        mainHandler.post { statusText.text = "Searching bulb on 2.4 GHz Wi-Fi..." }
                     }
                 })
             } catch (e: Throwable) {
@@ -1043,11 +1066,11 @@ class TuyaPairingActivity : Activity() {
                     }
                 }
                 override fun onError(code: String, msg: String) {
-                    callback(12345678L)
+                    createDefaultHome(callback)
                 }
             })
         } catch (e: Throwable) {
-            callback(12345678L)
+            createDefaultHome(callback)
         }
     }
 
