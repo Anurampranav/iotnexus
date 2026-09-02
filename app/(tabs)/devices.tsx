@@ -247,4 +247,10 @@ const styles = StyleSheet.create({
     shadowColor: Colors.primary,
     shadowOffset: { width: 0, height: 4 },
   },
+  addDeviceButtonText: {
+    color: '#FFFFFF',
+    fontFamily: Typography.fontFamily.bold,
+    fontSize: Typography.fontSize.base,
+    fontWeight: 'bold',
+  },
 });

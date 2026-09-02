@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
 import { useAutomationStore } from '@store/automationStore';
@@ -12,6 +13,7 @@ import { AutomationBuilderModal } from '../../src/components/automation/Automati
 import type { AutomationRule } from '@models/automation';
 
 export default function AutomationsScreen() {
+  const router = useRouter();
   const { automations, loadAutomations, toggleAutomation, isLoading } = useAutomationStore();
 
   // Modals Visibility State
