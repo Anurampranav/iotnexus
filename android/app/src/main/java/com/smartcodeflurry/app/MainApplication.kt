@@ -23,6 +23,8 @@ class MainApplication : Application(), ReactApplication {
         PackageList(this).packages.apply {
           // Native Tuya SDK Bridge Package
           add(com.smartcodeflurry.app.tuya.TuyaPackage())
+          // Real Hardware & Network Discovery Package (UDP, Subnet, BLE)
+          add(com.smartcodeflurry.app.discovery.NetworkDiscoveryPackage())
         }
     )
   }

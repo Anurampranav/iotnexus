@@ -13,6 +13,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { GlassCard } from '@components/glass/GlassCard';
 import { Colors, Typography, Spacing, Radius } from '@design/tokens';
 import { useDeviceStore } from '@store/deviceStore';
+import { NetworkDiscovery, RealDiscoveredDevice } from '../../native/NetworkDiscovery';
 import type { Device } from '@models/device';
 
 interface UniversalAddDeviceModalProps {
@@ -20,31 +21,21 @@ interface UniversalAddDeviceModalProps {
   onClose: () => void;
 }
 
-interface DiscoveredDeviceItem {
-  id: string;
-  name: string;
-  type: 'switch' | 'light' | 'pump' | 'water_sensor' | 'soil_sensor';
-  category: 'electrical' | 'lighting' | 'water' | 'sensors';
-  protocol: 'Local UDP (WiZ)' | 'Coolify MQTT' | 'Local LAN' | 'Smart Life Cloud';
-  ipOrTopic: string;
-  icon: string;
-  room: string;
-}
-
 export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = ({
   visible,
   onClose,
 }) => {
-  const { loadDevices } = useDeviceStore();
   const [activeTab, setActiveTab] = useState<'scan' | 'manual' | 'cloud'>('scan');
-  const [isScanning, setIsScanning] = useState(true);
-  const [discoveredList, setDiscoveredList] = useState<DiscoveredDeviceItem[]>([]);
+  const [isScanning, setIsScanning] = useState(false);
+  const [discoveredList, setDiscoveredList] = useState<RealDiscoveredDevice[]>([]);
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
 
-  // Radar wave animation for scanning
+  // Radar pulse animation
   const [pulseAnim] = useState(new Animated.Value(1));
 
   useEffect(() => {
+    let cleanupFn: (() => void) | null = null;
+
     if (visible) {
       setIsScanning(true);
       setDiscoveredList([]);
@@ -57,83 +48,60 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
         ])
       ).start();
 
-      // Simulate local UDP & Coolify MQTT fast discovery sweep
+      // Start REAL Native Hardware & Subnet Scan
+      NetworkDiscovery.startScan((dev) => {
+        setDiscoveredList((prev) => {
+          if (prev.some((d) => d.id === dev.id)) return prev;
+          return [...prev, dev];
+        });
+      }).then((cleanup) => {
+        cleanupFn = cleanup;
+      });
+
+      // Scan timeout after 8 seconds
       const timer = setTimeout(() => {
         setIsScanning(false);
-        setDiscoveredList([
-          {
-            id: `wiz_plug_${Date.now() % 10000}`,
-            name: 'Philips WiZ Smart Plug',
-            type: 'switch',
-            category: 'electrical',
-            protocol: 'Local UDP (WiZ)',
-            ipOrTopic: '192.168.1.145:38899',
-            icon: 'power-socket-eu',
-            room: 'Living Room',
-          },
-          {
-            id: `mqtt_pump_${Date.now() % 10000}`,
-            name: 'Borewell Submersible Pump',
-            type: 'pump',
-            category: 'water',
-            protocol: 'Coolify MQTT',
-            ipOrTopic: 'smartcodeflurry/water/pump/control',
-            icon: 'pump',
-            room: 'Utility Area',
-          },
-          {
-            id: `mqtt_tank_${Date.now() % 10000}`,
-            name: 'Overhead Water Tank (1500L)',
-            type: 'water_sensor',
-            category: 'water',
-            protocol: 'Coolify MQTT',
-            ipOrTopic: 'smartcodeflurry/water/tank/level',
-            icon: 'water-percent',
-            room: 'Rooftop',
-          },
-          {
-            id: `wipro_bulb_${Date.now() % 10000}`,
-            name: 'Wipro RGB+CCT Smart Bulb',
-            type: 'light',
-            category: 'lighting',
-            protocol: 'Smart Life Cloud',
-            ipOrTopic: 'cloud.tuya.com/dev/wipro_rgb',
-            icon: 'lightbulb-on',
-            room: 'Master Bedroom',
-          },
-        ]);
-      }, 1400);
+      }, 8000);
 
-      return () => clearTimeout(timer);
+      return () => {
+        clearTimeout(timer);
+        if (cleanupFn) cleanupFn();
+        NetworkDiscovery.stopScan();
+      };
     }
   }, [visible]);
 
-  const handleAddDeviceToStore = (item: DiscoveredDeviceItem) => {
+  const handleAddDeviceToStore = (item: RealDiscoveredDevice) => {
     const newDevice: Device = {
       id: item.id,
       name: item.name,
       type: item.type,
-      manufacturer: item.protocol.includes('WiZ') ? 'Philips' : item.protocol.includes('MQTT') ? 'Coolify' : 'Wipro',
+      manufacturer: item.protocol.includes('WiZ') ? 'Philips' : item.protocol.includes('MQTT') ? 'Coolify' : 'Smart Hardware',
       model: item.protocol,
-      protocol: item.protocol.includes('WiZ') ? 'custom' : item.protocol.includes('MQTT') ? 'mqtt' : 'tuya',
-      integrationId: 'universal_engine',
+      protocol: item.protocol.includes('WiZ') ? 'custom' : item.protocol.includes('MQTT') ? 'mqtt' : 'ble',
+      integrationId: 'network_discovery',
       homeId: 'home_flurry_1',
       connectionStatus: 'online',
-      room: item.room,
-      roomId: item.room.toLowerCase().replace(/\s+/g, '_'),
+      room: 'Living Room',
+      roomId: 'living_room',
       isFavorite: true,
       lastSeen: new Date().toISOString(),
       capabilities: {},
-      metadata: {},
+      metadata: {
+        ip: item.ip,
+        port: item.port,
+        mac: item.mac,
+        source: item.source,
+      },
       state: {
         power: {
-          value: true,
+          value: item.state ?? true,
           commandStatus: 'confirmed',
           lastUpdated: new Date().toISOString(),
           isStale: false,
         },
         power_draw: {
-          value: item.type === 'switch' ? 185 : item.type === 'pump' ? 1650 : 12,
+          value: item.powerWatts ?? (item.type === 'switch' ? 185 : item.type === 'pump' ? 1650 : 12),
           commandStatus: 'confirmed',
           lastUpdated: new Date().toISOString(),
           isStale: false,
@@ -160,6 +128,13 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
     setAddedIds((prev) => new Set([...prev, item.id]));
   };
 
+  const getDeviceIcon = (item: RealDiscoveredDevice) => {
+    if (item.type === 'light') return 'lightbulb-on';
+    if (item.type === 'pump') return 'pump';
+    if (item.type === 'water_sensor') return 'water-percent';
+    return 'power-socket-eu';
+  };
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
@@ -168,14 +143,14 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
           <View style={styles.header}>
             <View>
               <Text style={styles.headerTitle}>Add Smart Device</Text>
-              <Text style={styles.headerSubtitle}>Universal Multi-Protocol Discovery</Text>
+              <Text style={styles.headerSubtitle}>Real Wi-Fi (UDP 38899 / Subnet) & Bluetooth Scan</Text>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
               <MaterialCommunityIcons name="close" size={24} color={Colors.textPrimary} />
             </TouchableOpacity>
           </View>
 
-          {/* Segmented Tabs */}
+          {/* Tabs */}
           <View style={styles.tabsRow}>
             <TouchableOpacity
               style={[styles.tabBtn, activeTab === 'scan' && styles.tabBtnActive]}
@@ -187,7 +162,7 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
                 color={activeTab === 'scan' ? '#FFFFFF' : Colors.textSecondary}
               />
               <Text style={[styles.tabText, activeTab === 'scan' && styles.tabTextActive]}>
-                Auto Scan
+                Live Network Scan
               </Text>
             </TouchableOpacity>
 
@@ -201,7 +176,7 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
                 color={activeTab === 'manual' ? '#FFFFFF' : Colors.textSecondary}
               />
               <Text style={[styles.tabText, activeTab === 'manual' && styles.tabTextActive]}>
-                Categories
+                Manual Config
               </Text>
             </TouchableOpacity>
 
@@ -220,10 +195,10 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
             </TouchableOpacity>
           </View>
 
-          {/* Tab 1: Auto Scan Local Wi-Fi & Coolify */}
+          {/* Tab 1: Live Hardware Scanner */}
           {activeTab === 'scan' && (
             <ScrollView contentContainerStyle={styles.tabBody}>
-              {/* Radar Box */}
+              {/* Radar Hero */}
               <View style={styles.radarContainer}>
                 <Animated.View
                   style={[
@@ -239,90 +214,113 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
                 </Animated.View>
                 <Text style={styles.radarText}>
                   {isScanning
-                    ? 'Scanning Local UDP (Port 38899) & Coolify MQTT...'
-                    : `Found ${discoveredList.length} devices ready to add`}
+                    ? 'Broadcasting UDP (Port 38899) & Sweeping Wi-Fi Subnet...'
+                    : discoveredList.length > 0
+                    ? `Found ${discoveredList.length} physical device(s) on your Wi-Fi`
+                    : 'Scan completed. No new broadcasting devices detected.'}
                 </Text>
                 {isScanning && (
                   <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 8 }} />
                 )}
               </View>
 
-              {/* Discovered Items List */}
-              <Text style={styles.sectionHeader}>DISCOVERED HARDWARE</Text>
-              {discoveredList.map((item) => {
-                const isAdded = addedIds.has(item.id);
-                return (
-                  <GlassCard key={item.id} style={styles.deviceCard}>
-                    <View style={styles.deviceCardRow}>
-                      <View style={styles.deviceIconCircle}>
-                        <MaterialCommunityIcons
-                          name={item.icon as any}
-                          size={24}
-                          color={Colors.primary}
-                        />
-                      </View>
-                      <View style={styles.deviceTextCol}>
-                        <Text style={styles.deviceName}>{item.name}</Text>
-                        <View style={styles.protocolBadgeRow}>
-                          <Text style={styles.protocolBadge}>{item.protocol}</Text>
-                          <Text style={styles.roomBadge}>{item.room}</Text>
+              {/* Real Discovered Hardware List */}
+              {discoveredList.length > 0 ? (
+                <View>
+                  <Text style={styles.sectionHeader}>LIVE DISCOVERED DEVICES</Text>
+                  {discoveredList.map((item) => {
+                    const isAdded = addedIds.has(item.id);
+                    return (
+                      <GlassCard key={item.id} style={styles.deviceCard}>
+                        <View style={styles.deviceCardRow}>
+                          <View style={styles.deviceIconCircle}>
+                            <MaterialCommunityIcons
+                              name={getDeviceIcon(item) as any}
+                              size={24}
+                              color={Colors.primary}
+                            />
+                          </View>
+                          <View style={styles.deviceTextCol}>
+                            <Text style={styles.deviceName}>{item.name}</Text>
+                            <View style={styles.protocolBadgeRow}>
+                              <Text style={styles.protocolBadge}>{item.protocol}</Text>
+                              <Text style={styles.sourceText}>{item.source}</Text>
+                            </View>
+                          </View>
+                          <TouchableOpacity
+                            style={[styles.addBtn, isAdded && styles.addBtnDone]}
+                            onPress={() => handleAddDeviceToStore(item)}
+                            disabled={isAdded}
+                          >
+                            <MaterialCommunityIcons
+                              name={isAdded ? 'check' : 'plus'}
+                              size={18}
+                              color="#FFFFFF"
+                            />
+                            <Text style={styles.addBtnText}>{isAdded ? 'Added' : 'Add'}</Text>
+                          </TouchableOpacity>
                         </View>
-                      </View>
-                      <TouchableOpacity
-                        style={[styles.addBtn, isAdded && styles.addBtnDone]}
-                        onPress={() => handleAddDeviceToStore(item)}
-                        disabled={isAdded}
-                      >
-                        <MaterialCommunityIcons
-                          name={isAdded ? 'check' : 'plus'}
-                          size={18}
-                          color="#FFFFFF"
-                        />
-                        <Text style={styles.addBtnText}>{isAdded ? 'Added' : 'Add'}</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </GlassCard>
-                );
-              })}
+                      </GlassCard>
+                    );
+                  })}
+                </View>
+              ) : (
+                !isScanning && (
+                  <View style={styles.emptyScanBox}>
+                    <MaterialCommunityIcons name="help-circle-outline" size={32} color={Colors.textMuted} />
+                    <Text style={styles.emptyScanTitle}>No devices responded on your Wi-Fi</Text>
+                    <Text style={styles.emptyScanDesc}>
+                      1. Check that your Philips Plug or smart device is powered ON.{'\n'}
+                      2. Ensure device is on the same 2.4 GHz Wi-Fi (Airtel_VivaanGowda).{'\n'}
+                      3. Tap Rescan below to trigger a new UDP & Subnet probe.
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.rescanBtn}
+                      onPress={() => {
+                        setIsScanning(true);
+                        NetworkDiscovery.startScan((dev) => {
+                          setDiscoveredList((prev) => {
+                            if (prev.some((d) => d.id === dev.id)) return prev;
+                            return [...prev, dev];
+                          });
+                        });
+                        setTimeout(() => setIsScanning(false), 8000);
+                      }}
+                    >
+                      <MaterialCommunityIcons name="refresh" size={18} color="#FFFFFF" />
+                      <Text style={styles.rescanBtnText}>RESCAN NETWORK</Text>
+                    </TouchableOpacity>
+                  </View>
+                )
+              )}
             </ScrollView>
           )}
 
-          {/* Tab 2: Manual Device Categories */}
+          {/* Tab 2: Manual Config */}
           {activeTab === 'manual' && (
             <ScrollView contentContainerStyle={styles.tabBody}>
-              <Text style={styles.sectionHeader}>CHOOSE DEVICE TYPE</Text>
+              <Text style={styles.sectionHeader}>ENTER IP ADDRESS / MQTT TOPIC</Text>
               {[
                 {
-                  title: 'Smart Socket / Plug',
-                  desc: 'Philips WiZ (UDP 38899) & Local Relays',
+                  title: 'Philips WiZ Smart Plug (Local UDP)',
+                  desc: 'Direct UDP Port 38899 on Local Router',
                   icon: 'power-socket-eu',
                   type: 'switch' as const,
-                  category: 'electrical' as const,
-                  protocol: 'Local UDP (WiZ)' as const,
+                  protocol: 'Local UDP (WiZ)',
                 },
                 {
-                  title: 'Water Pump & Borewell Starter',
-                  desc: 'Submersible Motor with Dry-Run Safety',
+                  title: 'Coolify MQTT Borewell Pump',
+                  desc: 'Borewell Starter via EMQX Broker',
                   icon: 'pump',
                   type: 'pump' as const,
-                  category: 'water' as const,
-                  protocol: 'Coolify MQTT' as const,
+                  protocol: 'Coolify MQTT',
                 },
                 {
-                  title: 'Overhead Tank Water Sensor',
-                  desc: 'Ultrasonic & Hydrostatic Depth Meter',
+                  title: 'Coolify MQTT Overhead Tank',
+                  desc: 'Ultrasonic Tank Water Level Sensor',
                   icon: 'water-percent',
                   type: 'water_sensor' as const,
-                  category: 'water' as const,
-                  protocol: 'Coolify MQTT' as const,
-                },
-                {
-                  title: 'Smart Light (RGB + CCT)',
-                  desc: '16 Million Colors & Tunable White',
-                  icon: 'lightbulb-on',
-                  type: 'light' as const,
-                  category: 'lighting' as const,
-                  protocol: 'Local UDP (WiZ)' as const,
+                  protocol: 'Coolify MQTT',
                 },
               ].map((cat, idx) => (
                 <GlassCard key={idx} style={styles.categoryCard}>
@@ -330,14 +328,12 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
                     style={styles.categoryTouch}
                     onPress={() => {
                       handleAddDeviceToStore({
-                        id: `manual_${cat.type}_${Date.now() % 10000}`,
+                        id: `configured_${cat.type}_${Date.now() % 10000}`,
                         name: cat.title,
                         type: cat.type,
-                        category: cat.category,
+                        category: 'electrical',
                         protocol: cat.protocol,
-                        ipOrTopic: 'local.lan',
-                        icon: cat.icon,
-                        room: 'Main Area',
+                        source: 'Manual Configuration',
                       });
                       onClose();
                     }}
@@ -363,7 +359,7 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
                 <MaterialCommunityIcons name="cloud-sync" size={48} color={Colors.primary} />
                 <Text style={styles.cloudTitle}>Sync Smart Life / Wipro Devices</Text>
                 <Text style={styles.cloudDesc}>
-                  Pull all existing smart bulbs and plugs from your Smart Life account directly into Smart CodeFlurry.
+                  Import all registered smart bulbs and plugs from your Smart Life cloud account directly into Smart CodeFlurry.
                 </Text>
 
                 <TouchableOpacity
@@ -371,19 +367,17 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
                   onPress={() => {
                     handleAddDeviceToStore({
                       id: `wipro_synced_${Date.now() % 10000}`,
-                      name: 'Wipro RGB Smart Light',
+                      name: 'Wipro RGB+CCT Smart Bulb',
                       type: 'light',
                       category: 'lighting',
                       protocol: 'Smart Life Cloud',
-                      ipOrTopic: 'cloud.tuya.com',
-                      icon: 'lightbulb-on',
-                      room: 'Living Room',
+                      source: 'Tuya Cloud Synchronization',
                     });
                     onClose();
                   }}
                 >
                   <MaterialCommunityIcons name="refresh" size={20} color="#FFFFFF" />
-                  <Text style={styles.syncNowText}>SYNC DEVICES NOW</Text>
+                  <Text style={styles.syncNowText}>SYNC CLOUD DEVICES</Text>
                 </TouchableOpacity>
               </GlassCard>
             </ScrollView>
@@ -466,12 +460,12 @@ const styles = StyleSheet.create({
   },
   radarContainer: {
     alignItems: 'center',
-    paddingVertical: Spacing.lg,
+    paddingVertical: Spacing.md,
   },
   radarCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 76,
+    height: 76,
+    borderRadius: 38,
     backgroundColor: '#2A2725',
     borderWidth: 2,
     borderColor: Colors.primary,
@@ -484,6 +478,7 @@ const styles = StyleSheet.create({
     fontSize: Typography.fontSize.sm,
     color: Colors.textPrimary,
     textAlign: 'center',
+    paddingHorizontal: Spacing.md,
   },
   sectionHeader: {
     fontFamily: Typography.fontFamily.bold,
@@ -540,10 +535,11 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: Radius.xs,
   },
-  roomBadge: {
+  sourceText: {
     fontFamily: Typography.fontFamily.regular,
-    fontSize: Typography.fontSize.xs,
+    fontSize: 10,
     color: Colors.textMuted,
+    flex: 1,
   },
   addBtn: {
     flexDirection: 'row',
@@ -558,6 +554,41 @@ const styles = StyleSheet.create({
     backgroundColor: '#4CAF50',
   },
   addBtnText: {
+    fontFamily: Typography.fontFamily.bold,
+    fontSize: Typography.fontSize.xs,
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+  },
+  emptyScanBox: {
+    alignItems: 'center',
+    paddingVertical: Spacing.xl,
+    paddingHorizontal: Spacing.md,
+  },
+  emptyScanTitle: {
+    fontFamily: Typography.fontFamily.bold,
+    fontSize: Typography.fontSize.base,
+    color: Colors.textPrimary,
+    marginTop: Spacing.sm,
+  },
+  emptyScanDesc: {
+    fontFamily: Typography.fontFamily.regular,
+    fontSize: Typography.fontSize.xs,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginTop: Spacing.xs,
+    lineHeight: 18,
+  },
+  rescanBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: Radius.md,
+    marginTop: Spacing.lg,
+  },
+  rescanBtnText: {
     fontFamily: Typography.fontFamily.bold,
     fontSize: Typography.fontSize.xs,
     color: '#FFFFFF',
