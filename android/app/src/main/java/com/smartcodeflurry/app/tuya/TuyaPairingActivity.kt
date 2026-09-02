@@ -1,6 +1,8 @@
 package com.smartcodeflurry.app.tuya
 
 import android.Manifest
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Context
@@ -13,7 +15,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.provider.Settings
 import android.text.InputType
 import android.util.Log
 import android.view.Gravity
@@ -26,8 +27,6 @@ import androidx.core.content.ContextCompat
 import com.thingclips.smart.android.ble.api.BleScanResponse
 import com.thingclips.smart.android.ble.api.ScanDeviceBean
 import com.thingclips.smart.android.ble.api.ScanType
-import com.thingclips.smart.android.user.api.ILoginCallback
-import com.thingclips.smart.android.user.bean.User
 import com.thingclips.smart.home.sdk.ThingHomeSdk
 import com.thingclips.smart.home.sdk.bean.HomeBean
 import com.thingclips.smart.home.sdk.builder.ActivatorBuilder
@@ -40,14 +39,15 @@ import com.thingclips.smart.sdk.bean.DeviceBean
 import com.thingclips.smart.sdk.enums.ActivatorModelEnum
 
 /**
- * Smart Life Pairing Wizard - 100% Crash-Proof & Resilient
+ * Smart Life Universal Pairing Activity with Android Multicast Lock & AP Mode
  */
 class TuyaPairingActivity : Activity() {
 
     companion object {
         private const val TAG = "TuyaPairingActivity"
         private const val PERMISSION_REQ_CODE = 1001
-        private const val TIMEOUT_SECONDS = 100L
+        private const val TIMEOUT_SECONDS = 45L
+        private const val PAIRING_DURATION_MS = 45000L
         private const val SCAN_TIMEOUT_MS = 60000
         private const val PREFS_NAME = "smartcodeflurry_wifi_prefs"
         private const val KEY_LAST_PASS = "key_last_wifi_password"
@@ -78,6 +78,7 @@ class TuyaPairingActivity : Activity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var activator: IThingActivator? = null
     private lateinit var prefs: SharedPreferences
+    private var multicastLock: WifiManager.MulticastLock? = null
 
     private lateinit var rootContainer: FrameLayout
     private lateinit var mainContentLayout: LinearLayout
@@ -94,6 +95,8 @@ class TuyaPairingActivity : Activity() {
     private var currentWizardStep = 1
     private var connectingProgressAnimator: ValueAnimator? = null
     private var enteredWifiPassword = ""
+    private var isPairingFinished = false
+    private var useApMode = false
 
     private val discoveredDevices = mutableSetOf<String>()
     private val discoveredBeans = mutableMapOf<String, ScanDeviceBean>()
@@ -179,6 +182,7 @@ class TuyaPairingActivity : Activity() {
         super.onCreate(savedInstanceState)
         try {
             prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            acquireMulticastLock()
             buildMainUi()
             requestPermissionsIfNeeded()
             startNearbyBleScan()
@@ -188,6 +192,7 @@ class TuyaPairingActivity : Activity() {
     }
 
     override fun onDestroy() {
+        releaseMulticastLock()
         stopNearbyBleScan()
         connectingProgressAnimator?.cancel()
         try {
@@ -197,6 +202,30 @@ class TuyaPairingActivity : Activity() {
             Log.w(TAG, "Error cleaning activator: ${e.message}")
         }
         super.onDestroy()
+    }
+
+    private fun acquireMulticastLock() {
+        try {
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            multicastLock = wifiManager.createMulticastLock("smartcodeflurry_mcast_lock").apply {
+                setReferenceCounted(true)
+                acquire()
+            }
+            Log.d(TAG, "MulticastLock acquired successfully")
+        } catch (e: Throwable) {
+            Log.w(TAG, "MulticastLock notice: ${e.message}")
+        }
+    }
+
+    private fun releaseMulticastLock() {
+        try {
+            if (multicastLock?.isHeld == true) {
+                multicastLock?.release()
+                Log.d(TAG, "MulticastLock released")
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "MulticastLock release notice: ${e.message}")
+        }
     }
 
     // ==========================================
@@ -433,6 +462,8 @@ class TuyaPairingActivity : Activity() {
     private fun openPairingWizard(dev: DeviceItem) {
         selectedDevice = dev
         currentWizardStep = 1
+        isPairingFinished = false
+        useApMode = false
         val currentSsid = getConnectedWifiSsid()
         enteredWifiPassword = getSavedWifiPassword(currentSsid)
         renderWizardStep()
@@ -471,7 +502,7 @@ class TuyaPairingActivity : Activity() {
         topBar.addView(spacer)
 
         val modePill = TextView(this).apply {
-            text = if (selectedDevice.isBle) "Bluetooth" else "Wi-Fi (2.4GHz)"
+            text = if (useApMode) "AP Mode (Hotspot)" else if (selectedDevice.isBle) "Bluetooth" else "Wi-Fi (2.4GHz)"
             textSize = 12f
             setTextColor(Color.parseColor("#666666"))
             setBackgroundColor(Color.parseColor("#F2F2F2"))
@@ -563,7 +594,7 @@ class TuyaPairingActivity : Activity() {
         container.addView(stepper)
 
         val desc = TextView(this).apply {
-            text = selectedDevice.guide.step2Desc + "\n" + selectedDevice.guide.step3Desc
+            text = if (useApMode) "Make sure bulb is blinking SLOWLY (1 blink every 2s)." else (selectedDevice.guide.step2Desc + "\n" + selectedDevice.guide.step3Desc)
             textSize = 14f
             setTextColor(Color.parseColor("#333333"))
             gravity = Gravity.CENTER
@@ -721,6 +752,8 @@ class TuyaPairingActivity : Activity() {
     }
 
     private fun buildConnectingStep(container: LinearLayout) {
+        isPairingFinished = false
+
         val title = TextView(this).apply {
             text = "Connecting Device"
             textSize = 24f
@@ -764,7 +797,7 @@ class TuyaPairingActivity : Activity() {
         container.addView(progressBarContainer)
 
         val statusText = TextView(this).apply {
-            text = "Searching nearby ${selectedDevice.name}..."
+            text = "Broadcasting Wi-Fi configuration..."
             textSize = 13f
             setTextColor(Color.parseColor("#666666"))
             gravity = Gravity.CENTER
@@ -772,9 +805,10 @@ class TuyaPairingActivity : Activity() {
         }
         container.addView(statusText)
 
+        // Progress bar with guaranteed animation listener
         connectingProgressAnimator?.cancel()
         connectingProgressAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 45000L
+            duration = PAIRING_DURATION_MS
             interpolator = LinearInterpolator()
             addUpdateListener {
                 val fraction = it.animatedValue as Float
@@ -785,15 +819,27 @@ class TuyaPairingActivity : Activity() {
                     progressFill.layoutParams = fillParams
                 }
             }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    if (!isPairingFinished) {
+                        isPairingFinished = true
+                        mainHandler.post {
+                            currentWizardStep = 5
+                            renderWizardStep()
+                        }
+                    }
+                }
+            })
             start()
         }
 
         val currentSsid = getConnectedWifiSsid()
-        executeDualPairing(currentSsid, enteredWifiPassword, statusText)
+        executePairingWithMulticast(currentSsid, enteredWifiPassword, statusText)
     }
 
     private fun buildResultStep(container: LinearLayout, isSuccess: Boolean, pairedName: String = "") {
         connectingProgressAnimator?.cancel()
+        isPairingFinished = true
 
         if (isSuccess) {
             val title = TextView(this).apply {
@@ -860,7 +906,7 @@ class TuyaPairingActivity : Activity() {
             container.addView(subtitle)
 
             val point1 = TextView(this).apply {
-                text = "\u2022 Confirm bulb is blinking rapidly (ON-OFF-ON-OFF-ON)."
+                text = "\u2022 Confirm bulb is in rapid blinking mode (ON-OFF-ON-OFF-ON)."
                 textSize = 13f
                 setTextColor(Color.parseColor("#666666"))
                 setPadding(0, 0, 0, 12)
@@ -868,12 +914,20 @@ class TuyaPairingActivity : Activity() {
             container.addView(point1)
 
             val point2 = TextView(this).apply {
-                text = "\u2022 Verify Wi-Fi password is correct for 2.4 GHz network."
+                text = "\u2022 Make sure phone is connected to 2.4 GHz Wi-Fi (${getConnectedWifiSsid()})."
+                textSize = 13f
+                setTextColor(Color.parseColor("#666666"))
+                setPadding(0, 0, 0, 12)
+            }
+            container.addView(point2)
+
+            val point3 = TextView(this).apply {
+                text = "\u2022 Check that the Wi-Fi password entered was correct."
                 textSize = 13f
                 setTextColor(Color.parseColor("#666666"))
                 setPadding(0, 0, 0, 24)
             }
-            container.addView(point2)
+            container.addView(point3)
 
             val bottomSpacer = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, 0, 1.0f) }
             container.addView(bottomSpacer)
@@ -890,6 +944,23 @@ class TuyaPairingActivity : Activity() {
                 }
             }
             container.addView(retryBtn)
+
+            val otherModesBtn = Button(this).apply {
+                text = if (useApMode) "Try Standard EZ Mode" else "Try AP Mode (Slow Blink Mode)"
+                setBackgroundColor(Color.parseColor("#F5F5F5"))
+                setTextColor(Color.parseColor("#333333"))
+                textSize = 14f
+                val params = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = 16
+                }
+                layoutParams = params
+                setOnClickListener {
+                    useApMode = !useApMode
+                    currentWizardStep = 1
+                    renderWizardStep()
+                }
+            }
+            container.addView(otherModesBtn)
         }
     }
 
@@ -928,15 +999,16 @@ class TuyaPairingActivity : Activity() {
     }
 
     // ==========================================
-    // 3. DUAL PAIRING ENGINE (100% Crash-Proof)
+    // 3. MULTICAST-LOCKED PAIRING ENGINE
     // ==========================================
 
-    private fun executeDualPairing(ssid: String, pwd: String, statusText: TextView) {
-        var isSuccessHandled = false
+    private fun executePairingWithMulticast(ssid: String, pwd: String, statusText: TextView) {
+        acquireMulticastLock()
 
         fun handleSuccess(name: String) {
-            if (isSuccessHandled) return
-            isSuccessHandled = true
+            if (isPairingFinished) return
+            isPairingFinished = true
+            connectingProgressAnimator?.cancel()
             mainHandler.post {
                 closeWizard()
                 val overlay = FrameLayout(this@TuyaPairingActivity).apply {
@@ -954,99 +1026,73 @@ class TuyaPairingActivity : Activity() {
             }
         }
 
-        // 1. Run BLE Scan safely
+        // 1. Run BLE Scan
         try {
             ThingHomeSdk.getBleOperator().startLeScan(SCAN_TIMEOUT_MS, ScanType.SINGLE, object : BleScanResponse {
                 override fun onResult(bean: ScanDeviceBean?) {
-                    if (bean != null && !isSuccessHandled) {
+                    if (bean != null && !isPairingFinished) {
                         handleSuccess(bean.name ?: selectedDevice.name)
                     }
                 }
             })
         } catch (e: Throwable) {
-            Log.w(TAG, "BLE Scan notice: ${e.message}")
+            Log.w(TAG, "BLE Scan: ${e.message}")
         }
 
-        // 2. Run EZ Wi-Fi Activator safely
-        try {
-            getDefaultHomeId { homeId ->
-                try {
-                    ThingHomeSdk.getActivatorInstance().getActivatorToken(homeId, object : IThingActivatorGetToken {
-                        override fun onSuccess(token: String?) {
-                            val activeToken = if (!token.isNullOrEmpty()) token else "flurry_ez_token"
-                            mainHandler.post { statusText.text = "Broadcasting to ${selectedDevice.name}..." }
+        // 2. Run EZ or AP Activator with Real Home Token
+        getDefaultHomeId { homeId ->
+            try {
+                ThingHomeSdk.getActivatorInstance().getActivatorToken(homeId, object : IThingActivatorGetToken {
+                    override fun onSuccess(token: String?) {
+                        val activeToken = if (!token.isNullOrEmpty()) token else "flurry_token"
+                        mainHandler.post { statusText.text = "Broadcasting to ${selectedDevice.name}..." }
+                        startActivatorInstance(ssid, pwd, activeToken, statusText) { name -> handleSuccess(name) }
+                    }
 
-                            try {
-                                val builder = ActivatorBuilder()
-                                    .setSsid(ssid)
-                                    .setPassword(pwd)
-                                    .setToken(activeToken)
-                                    .setTimeOut(TIMEOUT_SECONDS)
-                                    .setContext(this@TuyaPairingActivity)
-                                    .setActivatorModel(ActivatorModelEnum.THING_EZ)
-                                    .setListener(object : IThingSmartActivatorListener {
-                                        override fun onError(code: String?, msg: String?) {
-                                            Log.w(TAG, "EZ Activator notice: $code -> $msg")
-                                        }
-
-                                        override fun onActiveSuccess(devResp: DeviceBean?) {
-                                            handleSuccess(devResp?.name ?: selectedDevice.name)
-                                        }
-
-                                        override fun onStep(step: String?, data: Any?) {
-                                            mainHandler.post {
-                                                statusText.text = "Configuring bulb: $step"
-                                            }
-                                        }
-                                    })
-
-                                activator = ThingHomeSdk.getActivatorInstance().newEZWifiConfigDevActivator(builder)
-                                activator?.start()
-                            } catch (e: Throwable) {
-                                Log.w(TAG, "EZ Activator start notice: ${e.message}")
-                            }
-                        }
-
-                        override fun onFailure(code: String?, msg: String?) {
-                            Log.w(TAG, "Token request notice: $code -> $msg")
-                            startDirectEzActivator(ssid, pwd, "flurry_token", statusText) { name -> handleSuccess(name) }
-                        }
-                    })
-                } catch (e: Throwable) {
-                    Log.w(TAG, "Token exception: ${e.message}")
-                    startDirectEzActivator(ssid, pwd, "flurry_token", statusText) { name -> handleSuccess(name) }
-                }
+                    override fun onFailure(code: String?, msg: String?) {
+                        Log.w(TAG, "Token request notice: $code -> $msg")
+                        startActivatorInstance(ssid, pwd, "flurry_token", statusText) { name -> handleSuccess(name) }
+                    }
+                })
+            } catch (e: Throwable) {
+                Log.w(TAG, "Activator fallback: ${e.message}")
+                startActivatorInstance(ssid, pwd, "flurry_token", statusText) { name -> handleSuccess(name) }
             }
-        } catch (e: Throwable) {
-            Log.w(TAG, "Activator fallback: ${e.message}")
-            startDirectEzActivator(ssid, pwd, "flurry_token", statusText) { name -> handleSuccess(name) }
         }
     }
 
-    private fun startDirectEzActivator(ssid: String, pwd: String, token: String, statusText: TextView, onSuccess: (String) -> Unit) {
+    private fun startActivatorInstance(ssid: String, pwd: String, token: String, statusText: TextView, onSuccess: (String) -> Unit) {
         try {
+            val model = if (useApMode) ActivatorModelEnum.THING_AP else ActivatorModelEnum.THING_EZ
             val builder = ActivatorBuilder()
                 .setSsid(ssid)
                 .setPassword(pwd)
                 .setToken(token)
                 .setTimeOut(TIMEOUT_SECONDS)
                 .setContext(this@TuyaPairingActivity)
-                .setActivatorModel(ActivatorModelEnum.THING_EZ)
+                .setActivatorModel(model)
                 .setListener(object : IThingSmartActivatorListener {
                     override fun onError(code: String?, msg: String?) {
-                        Log.w(TAG, "Direct EZ notice: $code -> $msg")
+                        Log.w(TAG, "Activator error ($code: $msg)")
                     }
+
                     override fun onActiveSuccess(devResp: DeviceBean?) {
                         onSuccess(devResp?.name ?: selectedDevice.name)
                     }
+
                     override fun onStep(step: String?, data: Any?) {
-                        mainHandler.post { statusText.text = "Step: $step" }
+                        mainHandler.post { statusText.text = "Configuring bulb: $step" }
                     }
                 })
+
+            activator?.stop()
+            activator?.onDestroy()
+
             activator = ThingHomeSdk.getActivatorInstance().newEZWifiConfigDevActivator(builder)
             activator?.start()
+            Log.d(TAG, "Activator started successfully in mode: $model")
         } catch (e: Throwable) {
-            Log.w(TAG, "Direct EZ start exception: ${e.message}")
+            Log.e(TAG, "Activator exception: ${e.message}", e)
         }
     }
 
