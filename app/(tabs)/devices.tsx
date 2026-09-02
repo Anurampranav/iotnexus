@@ -1,16 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useDeviceStore } from '@store/deviceStore';
 import { GlassInput } from '@components/glass/GlassInput';
 import { DeviceCard } from '@components/device/DeviceCard';
-import { GlassButton } from '@components/glass/GlassButton';
-import { EmptyState } from '@components/shared/EmptyState';
 import { Colors, Typography, Spacing, Radius } from '@design/tokens';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { DeviceType } from '@models/device';
-import { Tuya } from '../../src/native/Tuya';
+import { UniversalAddDeviceModal } from '@components/devices/UniversalAddDeviceModal';
 
 type FilterType = 'all' | 'sensors' | 'pumps' | 'lights' | 'other';
 
@@ -20,6 +18,7 @@ export default function DevicesScreen() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
+  const [isAddModalVisible, setIsAddModalVisible] = useState(false);
 
   useEffect(() => {
     loadDevices();
@@ -35,13 +34,11 @@ export default function DevicesScreen() {
 
   const getFilteredDevices = () => {
     return devices.filter(device => {
-      // 1. Search Query filter
       const matchesSearch = device.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                             (device.room?.toLowerCase() ?? '').includes(searchQuery.toLowerCase());
 
       if (!matchesSearch) return false;
 
-      // 2. Chip filter
       switch (activeFilter) {
         case 'sensors':
           return device.type === 'water_sensor' || device.type === 'soil_sensor' || device.type === 'temperature_sensor';
@@ -61,17 +58,9 @@ export default function DevicesScreen() {
 
   const filtered = getFilteredDevices();
 
-  const handleAddDevice = async () => {
-    try {
-      await Tuya.startDevicePairing();
-    } catch (err: any) {
-      Alert.alert('Add Device Error', err?.message || 'Failed to open device pairing screen.');
-    }
-  };
-
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      {/* Header matching chart */}
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.headerIconBtn}>
           <MaterialCommunityIcons name="menu" size={24} color={Colors.textPrimary} />
@@ -128,23 +117,29 @@ export default function DevicesScreen() {
           <View style={styles.emptyContainer}>
             <MaterialCommunityIcons name="devices" size={48} color={Colors.textMuted} />
             <Text style={styles.emptyTitle}>No Devices Connected</Text>
-            <Text style={styles.emptyDesc}>Tap + Add Device below to discover and pair your Tuya smart devices.</Text>
+            <Text style={styles.emptyDesc}>Tap + Add Device below to discover Local UDP, Coolify MQTT & Smart Life hardware.</Text>
           </View>
         }
         refreshing={isLoading}
         onRefresh={loadDevices}
       />
 
-      {/* Floating Add Device button matching chart */}
+      {/* Floating Add Device button */}
       <View style={styles.fabContainer}>
         <TouchableOpacity
           style={styles.addDeviceButton}
-          onPress={handleAddDevice}
+          onPress={() => setIsAddModalVisible(true)}
           activeOpacity={0.85}
         >
           <Text style={styles.addDeviceButtonText}>+ Add Device</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Universal Multi-Protocol Add Device Modal */}
+      <UniversalAddDeviceModal
+        visible={isAddModalVisible}
+        onClose={() => setIsAddModalVisible(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -166,57 +161,55 @@ const styles = StyleSheet.create({
   },
   title: {
     fontFamily: Typography.fontFamily.bold,
-    fontSize: Typography.fontSize.xl,
+    fontSize: Typography.fontSize.lg,
     color: Colors.textPrimary,
   },
   searchSection: {
     paddingHorizontal: Spacing.base,
-    marginBottom: Spacing.md,
+    marginBottom: Spacing.sm,
   },
   filterSection: {
     marginBottom: Spacing.md,
   },
   filterScroll: {
     paddingHorizontal: Spacing.base,
-    gap: Spacing.sm,
+    gap: Spacing.xs,
   },
   chip: {
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.xs,
     borderRadius: Radius.full,
     borderWidth: 1,
   },
   chipActive: {
-    backgroundColor: Colors.surface,
+    backgroundColor: Colors.primary,
     borderColor: Colors.primary,
   },
   chipInactive: {
     backgroundColor: Colors.surface,
-    borderColor: Colors.border,
+    borderColor: Colors.glassBorder,
   },
   chipLabel: {
     fontFamily: Typography.fontFamily.medium,
     fontSize: Typography.fontSize.sm,
   },
   chipLabelActive: {
-    color: Colors.primary,
-    fontFamily: Typography.fontFamily.bold,
+    color: Colors.textPrimary,
+    fontWeight: 'bold',
   },
   chipLabelInactive: {
     color: Colors.textSecondary,
   },
   listContent: {
     paddingHorizontal: Spacing.base,
-    paddingBottom: 160,
+    paddingBottom: 140,
+    gap: Spacing.sm,
   },
   emptyContainer: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.xl,
-    padding: Spacing['2xl'],
     alignItems: 'center',
-    marginTop: Spacing.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    justifyContent: 'center',
+    paddingVertical: Spacing['3xl'],
+    paddingHorizontal: Spacing.xl,
   },
   emptyTitle: {
     fontFamily: Typography.fontFamily.bold,
@@ -246,6 +239,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     shadowColor: Colors.primary,
     shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
   },
   addDeviceButtonText: {
     color: '#FFFFFF',
