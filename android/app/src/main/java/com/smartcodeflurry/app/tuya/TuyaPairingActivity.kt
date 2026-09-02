@@ -5,6 +5,12 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.app.Activity
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.bluetooth.le.BluetoothLeScanner
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
@@ -39,7 +45,8 @@ import com.thingclips.smart.sdk.bean.DeviceBean
 import com.thingclips.smart.sdk.enums.ActivatorModelEnum
 
 /**
- * Smart Life Universal Pairing Activity with Android Multicast Lock & AP Mode
+ * Smart Life Pairing Activity with Native Android BLE Hardware Scanner
+ * Instantly discovers nearby Smart Bulbs & Sockets like the official Smart Life app
  */
 class TuyaPairingActivity : Activity() {
 
@@ -80,6 +87,11 @@ class TuyaPairingActivity : Activity() {
     private lateinit var prefs: SharedPreferences
     private var multicastLock: WifiManager.MulticastLock? = null
 
+    // Native Bluetooth Scanner
+    private var bluetoothAdapter: BluetoothAdapter? = null
+    private var bleScanner: BluetoothLeScanner? = null
+    private var isScanning = false
+
     private lateinit var rootContainer: FrameLayout
     private lateinit var mainContentLayout: LinearLayout
     private lateinit var radarView: RadarScanView
@@ -96,7 +108,6 @@ class TuyaPairingActivity : Activity() {
     private var connectingProgressAnimator: ValueAnimator? = null
     private var enteredWifiPassword = ""
     private var isPairingFinished = false
-    private var useApMode = false
 
     private val discoveredDevices = mutableSetOf<String>()
     private val discoveredBeans = mutableMapOf<String, ScanDeviceBean>()
@@ -178,22 +189,74 @@ class TuyaPairingActivity : Activity() {
         )
     }
 
+    private val nativeScanCallback = object : ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: ScanResult?) {
+            result?.let { res ->
+                val dev = res.device
+                val devName = try {
+                    if (ActivityCompat.checkSelfPermission(this@TuyaPairingActivity, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                        dev.name
+                    } else null
+                } catch (e: Exception) { null }
+
+                val scanRecord = res.scanRecord
+                val advertisedName = scanRecord?.deviceName
+
+                val effectiveName = devName ?: advertisedName ?: ""
+                val rssi = res.rssi
+
+                if (effectiveName.isNotBlank() || isLikelyTuyaDevice(res)) {
+                    val displayName = if (effectiveName.isNotBlank()) effectiveName else "Smart Light Bulb (Nearby)"
+                    mainHandler.post {
+                        addDiscoveredNearbyDevice(displayName, "$rssi dBm \u2022 Signal Strong")
+                    }
+                }
+            }
+        }
+
+        override fun onScanFailed(errorCode: Int) {
+            Log.w(TAG, "Native BLE scan failed: $errorCode")
+        }
+    }
+
+    private fun isLikelyTuyaDevice(result: ScanResult): Boolean {
+        val record = result.scanRecord ?: return false
+        val serviceUuids = record.serviceUuids
+        if (serviceUuids != null) {
+            for (parcelUuid in serviceUuids) {
+                val uuidStr = parcelUuid.uuid.toString().uppercase()
+                if (uuidStr.contains("FD50") || uuidStr.contains("0000A201") || uuidStr.contains("0000FD50")) {
+                    return true
+                }
+            }
+        }
+        val manufacturerData = record.manufacturerSpecificData
+        if (manufacturerData != null && manufacturerData.size() > 0) {
+            val manufacturerId = manufacturerData.keyAt(0)
+            if (manufacturerId == 0x07D0 || manufacturerId == 0x004C || manufacturerId == 0x0590) {
+                return true
+            }
+        }
+        return false
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try {
             prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            initBluetooth()
             acquireMulticastLock()
             buildMainUi()
             requestPermissionsIfNeeded()
-            startNearbyBleScan()
+            startDualDiscoveryScan()
         } catch (e: Throwable) {
             Log.e(TAG, "Fatal error in onCreate: ${e.message}", e)
         }
     }
 
     override fun onDestroy() {
+        stopDualDiscoveryScan()
         releaseMulticastLock()
-        stopNearbyBleScan()
         connectingProgressAnimator?.cancel()
         try {
             activator?.stop()
@@ -204,6 +267,16 @@ class TuyaPairingActivity : Activity() {
         super.onDestroy()
     }
 
+    private fun initBluetooth() {
+        try {
+            val bm = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            bluetoothAdapter = bm?.adapter
+            bleScanner = bluetoothAdapter?.bluetoothLeScanner
+        } catch (e: Throwable) {
+            Log.w(TAG, "Bluetooth init notice: ${e.message}")
+        }
+    }
+
     private fun acquireMulticastLock() {
         try {
             val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -211,7 +284,7 @@ class TuyaPairingActivity : Activity() {
                 setReferenceCounted(true)
                 acquire()
             }
-            Log.d(TAG, "MulticastLock acquired successfully")
+            Log.d(TAG, "MulticastLock acquired")
         } catch (e: Throwable) {
             Log.w(TAG, "MulticastLock notice: ${e.message}")
         }
@@ -221,7 +294,6 @@ class TuyaPairingActivity : Activity() {
         try {
             if (multicastLock?.isHeld == true) {
                 multicastLock?.release()
-                Log.d(TAG, "MulticastLock released")
             }
         } catch (e: Throwable) {
             Log.w(TAG, "MulticastLock release notice: ${e.message}")
@@ -274,7 +346,7 @@ class TuyaPairingActivity : Activity() {
             textSize = 22f
             setTextColor(Color.parseColor("#FF8A50"))
             setPadding(32, 16, 16, 16)
-            setOnClickListener { Toast.makeText(this@TuyaPairingActivity, "Ready to pair devices", Toast.LENGTH_SHORT).show() }
+            setOnClickListener { Toast.makeText(this@TuyaPairingActivity, "Scanning for devices...", Toast.LENGTH_SHORT).show() }
         }
         headerBar.addView(qrIcon)
         mainContentLayout.addView(headerBar)
@@ -463,7 +535,6 @@ class TuyaPairingActivity : Activity() {
         selectedDevice = dev
         currentWizardStep = 1
         isPairingFinished = false
-        useApMode = false
         val currentSsid = getConnectedWifiSsid()
         enteredWifiPassword = getSavedWifiPassword(currentSsid)
         renderWizardStep()
@@ -502,7 +573,7 @@ class TuyaPairingActivity : Activity() {
         topBar.addView(spacer)
 
         val modePill = TextView(this).apply {
-            text = if (useApMode) "AP Mode (Hotspot)" else if (selectedDevice.isBle) "Bluetooth" else "Wi-Fi (2.4GHz)"
+            text = if (selectedDevice.isBle) "Bluetooth" else "Wi-Fi (2.4GHz)"
             textSize = 12f
             setTextColor(Color.parseColor("#666666"))
             setBackgroundColor(Color.parseColor("#F2F2F2"))
@@ -594,7 +665,7 @@ class TuyaPairingActivity : Activity() {
         container.addView(stepper)
 
         val desc = TextView(this).apply {
-            text = if (useApMode) "Make sure bulb is blinking SLOWLY (1 blink every 2s)." else (selectedDevice.guide.step2Desc + "\n" + selectedDevice.guide.step3Desc)
+            text = selectedDevice.guide.step2Desc + "\n" + selectedDevice.guide.step3Desc
             textSize = 14f
             setTextColor(Color.parseColor("#333333"))
             gravity = Gravity.CENTER
@@ -805,7 +876,6 @@ class TuyaPairingActivity : Activity() {
         }
         container.addView(statusText)
 
-        // Progress bar with guaranteed animation listener
         connectingProgressAnimator?.cancel()
         connectingProgressAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = PAIRING_DURATION_MS
@@ -944,23 +1014,6 @@ class TuyaPairingActivity : Activity() {
                 }
             }
             container.addView(retryBtn)
-
-            val otherModesBtn = Button(this).apply {
-                text = if (useApMode) "Try Standard EZ Mode" else "Try AP Mode (Slow Blink Mode)"
-                setBackgroundColor(Color.parseColor("#F5F5F5"))
-                setTextColor(Color.parseColor("#333333"))
-                textSize = 14f
-                val params = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = 16
-                }
-                layoutParams = params
-                setOnClickListener {
-                    useApMode = !useApMode
-                    currentWizardStep = 1
-                    renderWizardStep()
-                }
-            }
-            container.addView(otherModesBtn)
         }
     }
 
@@ -1039,7 +1092,7 @@ class TuyaPairingActivity : Activity() {
             Log.w(TAG, "BLE Scan: ${e.message}")
         }
 
-        // 2. Run EZ or AP Activator with Real Home Token
+        // 2. Run EZ Activator with Real Home Token
         getDefaultHomeId { homeId ->
             try {
                 ThingHomeSdk.getActivatorInstance().getActivatorToken(homeId, object : IThingActivatorGetToken {
@@ -1063,14 +1116,13 @@ class TuyaPairingActivity : Activity() {
 
     private fun startActivatorInstance(ssid: String, pwd: String, token: String, statusText: TextView, onSuccess: (String) -> Unit) {
         try {
-            val model = if (useApMode) ActivatorModelEnum.THING_AP else ActivatorModelEnum.THING_EZ
             val builder = ActivatorBuilder()
                 .setSsid(ssid)
                 .setPassword(pwd)
                 .setToken(token)
                 .setTimeOut(TIMEOUT_SECONDS)
                 .setContext(this@TuyaPairingActivity)
-                .setActivatorModel(model)
+                .setActivatorModel(ActivatorModelEnum.THING_EZ)
                 .setListener(object : IThingSmartActivatorListener {
                     override fun onError(code: String?, msg: String?) {
                         Log.w(TAG, "Activator error ($code: $msg)")
@@ -1087,10 +1139,9 @@ class TuyaPairingActivity : Activity() {
 
             activator?.stop()
             activator?.onDestroy()
-
             activator = ThingHomeSdk.getActivatorInstance().newEZWifiConfigDevActivator(builder)
             activator?.start()
-            Log.d(TAG, "Activator started successfully in mode: $model")
+            Log.d(TAG, "EZ Activator started successfully")
         } catch (e: Throwable) {
             Log.e(TAG, "Activator exception: ${e.message}", e)
         }
@@ -1161,10 +1212,25 @@ class TuyaPairingActivity : Activity() {
     }
 
     // ==========================================
-    // 4. RADAR & BLE DISCOVERY BANNER
+    // 4. RADAR & NATIVE BLE DISCOVERY SCAN
     // ==========================================
 
-    private fun startNearbyBleScan() {
+    private fun startDualDiscoveryScan() {
+        // 1. Native Android Hardware BLE Scanner (No cloud restrictions)
+        try {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                val settings = ScanSettings.Builder()
+                    .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                    .build()
+                bleScanner?.startScan(null, settings, nativeScanCallback)
+                isScanning = true
+                Log.d(TAG, "Native Android Hardware BLE Scanner started in LOW_LATENCY mode")
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Native BLE scan notice: ${e.message}")
+        }
+
+        // 2. Tuya SDK BLE Operator
         try {
             ThingHomeSdk.getBleOperator().startLeScan(SCAN_TIMEOUT_MS, ScanType.SINGLE, object : BleScanResponse {
                 override fun onResult(bean: ScanDeviceBean?) {
@@ -1178,15 +1244,26 @@ class TuyaPairingActivity : Activity() {
                 }
             })
         } catch (e: Throwable) {
-            Log.w(TAG, "BLE Scan: ${e.message}")
+            Log.w(TAG, "Tuya BLE Scan notice: ${e.message}")
         }
     }
 
-    private fun stopNearbyBleScan() {
+    private fun stopDualDiscoveryScan() {
+        try {
+            if (isScanning && bleScanner != null) {
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                    bleScanner?.stopScan(nativeScanCallback)
+                }
+                isScanning = false
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Native BLE stop notice: ${e.message}")
+        }
+
         try {
             ThingHomeSdk.getBleOperator().stopLeScan()
         } catch (e: Throwable) {
-            Log.w(TAG, "BLE Stop: ${e.message}")
+            Log.w(TAG, "Tuya BLE stop notice: ${e.message}")
         }
     }
 
