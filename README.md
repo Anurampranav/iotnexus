@@ -81,17 +81,17 @@ graph TD
 - Android Studio with Android SDK 34/35 & JBR 17/21
 - Connected Android physical test device (or Android Emulator) with USB Debugging enabled
 
-### 1. Install Dependencies
+### 1. Install Dependencies !
 ```bash
 npm install
 ```
 
-### 2. Run in Development Mode
+### 2. Run in Development Mode !
 ```bash
 npx expo start
 ```
 
-### 3. Build & Install Release APK
+### 3. Build & Install Release APK !
 ```powershell
 # Set Java Home to Android Studio JBR
 $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
