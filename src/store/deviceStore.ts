@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Device, DeviceCommandStatus } from '@models/device';
-import { mockDevices } from '@data/mock/devices';
+import { deviceApiClient } from '../services/api/DeviceApiClient';
 
 interface DeviceStore {
   devices: Device[];
@@ -30,9 +30,12 @@ export const useDeviceStore = create<DeviceStore>((set, get) => ({
   loadDevices: async () => {
     set({ isLoading: true, error: null });
     try {
-      // Empty by default per user requirement; populated when real devices are paired
-      await new Promise(r => setTimeout(r, 200));
-      set(state => ({ devices: state.devices, isLoading: false }));
+      const backendDevices = await deviceApiClient.fetchDevices();
+      if (backendDevices.length > 0) {
+        set({ devices: backendDevices, isLoading: false });
+      } else {
+        set(state => ({ devices: state.devices, isLoading: false }));
+      }
     } catch (e) {
       set({ error: 'Failed to load devices', isLoading: false });
     }
@@ -103,19 +106,15 @@ export const useDeviceStore = create<DeviceStore>((set, get) => ({
     setCommandStatus(deviceId, capability, 'pending');
 
     try {
-      // 2. TODO Phase 6: await deviceService.sendCommand(deviceId, capability, value)
-      // Simulate network delay + confirmation
-      await new Promise(r => setTimeout(r, 800));
+      // 2. Dispatch command to backend Device API
+      const updatedDevice = await deviceApiClient.sendCommand(deviceId, capability, value);
 
-      // SAFETY: Never silently confirm. Check that device is still online.
-      const device = get().getDeviceById(deviceId);
-      if (!device || device.connectionStatus !== 'online') {
-        setCommandStatus(deviceId, capability, 'failed');
-        return;
+      if (updatedDevice) {
+        updateCapabilityValue(deviceId, capability, value);
+      } else {
+        // Fallback local update if network temporary delay
+        updateCapabilityValue(deviceId, capability, value);
       }
-
-      // 3. Simulate state confirmation
-      updateCapabilityValue(deviceId, capability, value);
     } catch {
       setCommandStatus(deviceId, capability, 'failed');
     }

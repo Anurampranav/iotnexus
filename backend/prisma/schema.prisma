@@ -1,0 +1,147 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String       @id @default(uuid())
+  email        String       @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  homes        HomeMember[]
+}
+
+model Home {
+  id          String           @id @default(uuid())
+  name        String
+  ownerId     String
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  members     HomeMember[]
+  rooms       Room[]
+  devices     Device[]
+  rules       AutomationRule[]
+}
+
+model HomeMember {
+  id        String   @id @default(uuid())
+  homeId    String
+  userId    String
+  role      String   @default("member") // owner, member, guest
+  createdAt DateTime @default(now())
+  home      Home     @relation(fields: [homeId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([homeId, userId])
+}
+
+model Room {
+  id        String   @id @default(uuid())
+  name      String
+  homeId    String
+  icon      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  home      Home     @relation(fields: [homeId], references: [id], onDelete: Cascade)
+  devices   Device[]
+}
+
+model Device {
+  id               String       @id
+  name             String
+  type             String       // pump, light, switch, water_sensor, soil_sensor, etc.
+  manufacturer     String
+  model            String?
+  protocol         String       // mqtt, tuya, matter, zigbee, ble, custom, simulated
+  integrationId    String       @default("core")
+  capabilities     String       // JSON string of Record<string, CapabilityDefinition>
+  state            String       // JSON string of DeviceState
+  connectionStatus String       @default("online") // online, offline, unknown, connecting
+  homeId           String
+  roomId           String?
+  room             String?
+  isFavorite       Boolean      @default(false)
+  lastSeen         DateTime?
+  metadata         String       @default("{}") // JSON string of Record<string, unknown>
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  home             Home         @relation(fields: [homeId], references: [id], onDelete: Cascade)
+  roomRef          Room?        @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  telemetry        Telemetry[]
+}
+
+model PendingDevice {
+  id            String   @id
+  name          String
+  type          String
+  manufacturer  String
+  model         String?
+  protocol      String
+  integrationId String   @default("discovery")
+  ip            String?
+  mac           String?
+  discoveredAt  DateTime @default(now())
+  capabilities  String   @default("{}") // JSON
+  initialState  String   @default("{}") // JSON
+  metadata      String   @default("{}") // JSON
+}
+
+model Telemetry {
+  id           String   @id @default(uuid())
+  deviceId     String
+  capability   String
+  valueString  String?
+  valueNumber  Float?
+  valueBoolean Boolean?
+  timestamp    DateTime @default(now())
+  device       Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, timestamp])
+}
+
+model AutomationRule {
+  id             String     @id @default(uuid())
+  homeId         String
+  name           String
+  description    String?
+  enabled        Boolean    @default(true)
+  status         String     @default("active") // active, disabled, error
+  isSafety       Boolean    @default(false)
+  trigger        String     // JSON Trigger
+  conditionGroup String?    // JSON ConditionGroup
+  actions        String     // JSON AutomationAction[]
+  lastTriggered  DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  home           Home       @relation(fields: [homeId], references: [id], onDelete: Cascade)
+  runs           RuleRun[]
+}
+
+model RuleRun {
+  id          String         @id @default(uuid())
+  ruleId      String
+  triggeredAt DateTime       @default(now())
+  result      String         // success, partial, failed, aborted
+  description String?
+  error       String?
+  rule        AutomationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id           String   @id @default(uuid())
+  userId       String?
+  homeId       String?
+  deviceId     String?
+  title        String
+  body         String
+  severity     String   @default("info") // info, warning, critical
+  read         Boolean  @default(false)
+  actionRoute  String?
+  createdAt    DateTime @default(now())
+}

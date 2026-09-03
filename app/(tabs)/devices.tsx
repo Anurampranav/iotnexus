@@ -7,8 +7,8 @@ import { DeviceCard } from '@components/device/DeviceCard';
 import { Colors, Typography, Spacing, Radius } from '@design/tokens';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { AddDeviceModal } from '../../src/components/devices/AddDeviceModal';
 import type { DeviceType } from '@models/device';
-import { UniversalAddDeviceModal } from '@components/devices/UniversalAddDeviceModal';
 
 type FilterType = 'all' | 'sensors' | 'pumps' | 'lights' | 'other';
 
@@ -117,7 +117,7 @@ export default function DevicesScreen() {
           <View style={styles.emptyContainer}>
             <MaterialCommunityIcons name="devices" size={48} color={Colors.textMuted} />
             <Text style={styles.emptyTitle}>No Devices Connected</Text>
-            <Text style={styles.emptyDesc}>Tap + Add Device below to discover Local UDP, Coolify MQTT & Smart Life hardware.</Text>
+            <Text style={styles.emptyDesc}>Tap + Add Device below to discover and connect your hardware.</Text>
           </View>
         }
         refreshing={isLoading}
@@ -135,8 +135,8 @@ export default function DevicesScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Universal Multi-Protocol Add Device Modal */}
-      <UniversalAddDeviceModal
+      {/* Effortless Device Adoption Modal */}
+      <AddDeviceModal
         visible={isAddModalVisible}
         onClose={() => setIsAddModalVisible(false)}
       />

@@ -152,15 +152,7 @@ android {
 dependencies {
     implementation("com.facebook.react:react-android")
     implementation fileTree(dir: "libs", include: ["*.aar", "*.jar"])
-    implementation('com.thingclips.smart:thingsmart-bizbundle-device_activator:7.8.0') {
-        exclude group: 'com.thingclips.smart', module: 'react-native'
-        exclude group: 'com.thingclips.smart', module: 'thingsmart-modularCampAnno'
-    }
-    implementation('com.thingclips.smart:thingsmart:7.8.0') {
-        exclude group: 'com.thingclips.smart', module: 'thingsmart-modularCampAnno'
-    }
-    implementation 'com.alibaba:fastjson:1.1.67.android'
-    implementation 'com.squareup.okhttp3:okhttp-urlconnection:3.14.9'
+
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";

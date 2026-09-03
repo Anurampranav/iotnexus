@@ -21,8 +21,6 @@ class MainApplication : Application(), ReactApplication {
       context = applicationContext,
       packageList =
         PackageList(this).packages.apply {
-          // Native Tuya SDK Bridge Package
-          add(com.smartcodeflurry.app.tuya.TuyaPackage())
           // Real Hardware & Network Discovery Package (UDP, Subnet, BLE)
           add(com.smartcodeflurry.app.discovery.NetworkDiscoveryPackage())
         }
@@ -38,15 +36,6 @@ class MainApplication : Application(), ReactApplication {
     }
     loadReactNative(this)
     ApplicationLifecycleDispatcher.onApplicationCreate(this)
-
-    // Initialize Tuya ThingHomeSdk at application startup
-    try {
-      com.thingclips.smart.home.sdk.ThingHomeSdk.init(this, BuildConfig.TUYA_APP_KEY, BuildConfig.TUYA_APP_SECRET)
-      com.thingclips.smart.home.sdk.ThingHomeSdk.setDebugMode(BuildConfig.DEBUG)
-      android.util.Log.d("MainApplication", "ThingHomeSdk successfully initialized in Application.onCreate")
-    } catch (e: Throwable) {
-      android.util.Log.e("MainApplication", "Failed to initialize ThingHomeSdk in Application.onCreate", e)
-    }
   }
 
   override fun onConfigurationChanged(newConfig: Configuration) {
