@@ -2,18 +2,7 @@ apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 apply plugin: 'com.facebook.react'
 
-// Load secrets from secrets.properties if available
-def secretsPropertiesFile = rootProject.file('../secrets.properties')
-if (!secretsPropertiesFile.exists()) {
-    secretsPropertiesFile = rootProject.file('secrets.properties')
-}
-def secretsProperties = new Properties()
-if (secretsPropertiesFile.exists()) {
-    secretsProperties.load(new FileInputStream(secretsPropertiesFile))
-}
 
-def tuyaAppKey = secretsProperties.getProperty('TUYA_APP_KEY') ?: (findProperty('TUYA_APP_KEY') ?: "")
-def tuyaAppSecret = secretsProperties.getProperty('TUYA_APP_SECRET') ?: (findProperty('TUYA_APP_SECRET') ?: "")
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -92,12 +81,7 @@ android {
         }
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
-        buildConfigField "String", "TUYA_APP_KEY", "\"${tuyaAppKey}\""
-        buildConfigField "String", "TUYA_APP_SECRET", "\"${tuyaAppSecret}\""
-        manifestPlaceholders = [
-            TUYA_APP_KEY: tuyaAppKey,
-            TUYA_APP_SECRET: tuyaAppSecret
-        ]
+
     }
     signingConfigs {
         debug {
