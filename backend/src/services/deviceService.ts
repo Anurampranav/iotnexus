@@ -1,5 +1,6 @@
 import { prisma } from './db.js';
 import { wsGateway } from './ws.js';
+import { TuyaLocalDriver } from './tuyaLocalDriver.js';
 import type {
   Device,
   DeviceState,
@@ -89,6 +90,24 @@ export class DeviceService {
     const existing = await prisma.device.findUnique({ where: { id: deviceId } });
     if (!existing) {
       throw new Error(`Device with ID ${deviceId} not found`);
+    }
+
+    // If device is managed via Tuya Local Protocol, dispatch directly to local TCP socket (Port 6668)
+    if (existing.protocol === 'tuya_lan' || existing.integrationId === 'tuya_local_driver') {
+      const meta = typeof existing.metadata === 'string' ? JSON.parse(existing.metadata) : existing.metadata || {};
+      const devIp = meta.ip || meta.discoveredIp;
+      if (devIp) {
+        const dps = TuyaLocalDriver.mapCapabilityToDps(capability, value);
+        TuyaLocalDriver.sendLocalCommand(
+          {
+            devId: existing.id,
+            localKey: meta.localKey || '',
+            ip: devIp,
+            version: meta.version || '3.3',
+          },
+          dps
+        ).catch(() => {});
+      }
     }
 
     const state: DeviceState = typeof existing.state === 'string' ? JSON.parse(existing.state) : existing.state || {};

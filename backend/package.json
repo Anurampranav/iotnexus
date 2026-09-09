@@ -1,6 +1,7 @@
 {
   "name": "iotnexus-backend",
   "version": "1.0.0",
+  "type": "module",
   "description": "Smart CodeFlurry / iotnexus Fastify + Prisma Backend Core",
   "main": "dist/index.js",
   "scripts": {

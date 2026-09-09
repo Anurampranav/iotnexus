@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Canonical Device Model — Smart CodeFlurry
  * Protocol-agnostic. All integrations (Tuya, MQTT, Matter…) map to this.
  */
@@ -41,6 +41,7 @@ export type DeviceType =
 
 export type DeviceProtocol =
   | 'tuya'
+  | 'tuya_lan'
   | 'mqtt'
   | 'matter'
   | 'zigbee'

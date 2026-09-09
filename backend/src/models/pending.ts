@@ -3,7 +3,7 @@
  * Represents an auto-discovered hardware device waiting for user adoption into a Home & Room.
  */
 
-import type { DeviceType, DeviceProtocol, CapabilityDefinition, DeviceState } from './device';
+import type { DeviceType, DeviceProtocol, CapabilityDefinition, DeviceState } from './device.js';
 
 export interface PendingDevice {
   id: string;

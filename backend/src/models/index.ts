@@ -2,8 +2,8 @@
  * Canonical Shared Models Index
  */
 
-export * from './device';
-export * from './automation';
-export * from './notification';
-export * from './pending';
-export * from './auth';
+export * from './device.js';
+export * from './automation.js';
+export * from './notification.js';
+export * from './pending.js';
+export * from './auth.js';
