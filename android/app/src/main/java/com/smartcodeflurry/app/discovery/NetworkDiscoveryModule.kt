@@ -117,7 +117,7 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
             val packet = DatagramPacket(wizPayload, wizPayload.size, broadcastAddr, 38899)
             socket.send(packet)
 
-            // Listen for REAL incoming responses from physical hardware
+            // Listen for WiZ and Tuya broadcast responses
             val buffer = ByteArray(2048)
             val receivePacket = DatagramPacket(buffer, buffer.size)
             val startTime = System.currentTimeMillis()
@@ -169,7 +169,7 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
     }
 
     // =========================================================================
-    // 2. REAL SUBNET PORT PROBE (Sweeps active IPs on local router)
+    // 2. REAL SUBNET PORT PROBE (Fast Multi-threaded Sweep)
     // =========================================================================
     private suspend fun realSubnetSweep() = coroutineScope {
         val localIp = getLocalIpAddress() ?: return@coroutineScope
@@ -177,43 +177,50 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
         if (parts.size != 4) return@coroutineScope
         val subnetPrefix = "${parts[0]}.${parts[1]}.${parts[2]}"
 
-        val smartPorts = listOf(38899, 80, 6668) // WiZ, HTTP Smart Relay/Shelly, Tuya Local
+        val smartPorts = listOf(6668, 80, 38899, 8080) // Tuya Local, HTTP Smart Relay/Shelly/Tasmota, WiZ
 
-        // Scan local IP range concurrently
-        for (i in 1..254) {
-            if (!isScanning) break
-            val targetIp = "$subnetPrefix.$i"
-            if (targetIp == localIp) continue
+        // Scan local IP range concurrently in parallel chunks
+        (1..254).chunked(32).forEach { chunk ->
+            if (!isScanning) return@coroutineScope
+            chunk.map { i ->
+                val targetIp = "$subnetPrefix.$i"
+                if (targetIp == localIp) return@map null
 
-            launch(Dispatchers.IO) {
-                for (port in smartPorts) {
-                    if (isPortOpen(targetIp, port, 250)) {
-                        val devType = when (port) {
-                            38899 -> "Philips WiZ Socket / Bulb"
-                            80 -> "Smart Wi-Fi Relay / Web Controller"
-                            6668 -> "Local Tuya Smart Device"
-                            else -> "Smart LAN Device"
+                async(Dispatchers.IO) {
+                    for (port in smartPorts) {
+                        if (!isScanning) break
+                        if (isPortOpen(targetIp, port, 180)) {
+                            val devType = when (port) {
+                                6668 -> "Tuya Smart Device / Plug"
+                                38899 -> "Philips WiZ Socket / Bulb"
+                                80 -> "Smart Wi-Fi Relay / Web Controller"
+                                else -> "Smart LAN Device"
+                            }
+                            val inferredType = when (port) {
+                                38899 -> "light"
+                                else -> "switch"
+                            }
+
+                            val map = Arguments.createMap().apply {
+                                putString("id", "lan_${targetIp.replace(".", "_")}_$port")
+                                putString("name", "$devType ($targetIp)")
+                                putString("type", inferredType)
+                                putString("category", if (inferredType == "light") "lighting" else "electrical")
+                                putString("protocol", if (port == 6668) "tuya_lan" else "Local LAN")
+                                putString("ip", targetIp)
+                                putInt("port", port)
+                                putString("source", "Live LAN Probe ($targetIp:$port)")
+                            }
+
+                            if (!foundDevices.containsKey(map.getString("id"))) {
+                                foundDevices[map.getString("id")!!] = map
+                                sendEvent("onDeviceDiscovered", map)
+                            }
+                            break
                         }
-
-                        val map = Arguments.createMap().apply {
-                            putString("id", "lan_${targetIp.replace(".", "_")}_$port")
-                            putString("name", "$devType ($targetIp)")
-                            putString("type", if (port == 38899) "switch" else "switch")
-                            putString("category", "electrical")
-                            putString("protocol", if (port == 38899) "Local UDP (WiZ)" else "Local LAN")
-                            putString("ip", targetIp)
-                            putInt("port", port)
-                            putString("source", "Real Open Port Probe ($port)")
-                        }
-
-                        if (!foundDevices.containsKey(map.getString("id"))) {
-                            foundDevices[map.getString("id")!!] = map
-                            sendEvent("onDeviceDiscovered", map)
-                        }
-                        break
                     }
                 }
-            }
+            }.filterNotNull().awaitAll()
         }
     }
 
