@@ -23,11 +23,11 @@ allprojects {
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
 
-subprojects {
-    if (it.name == "react-native-worklets") {
-        it.tasks.all { task ->
-            if (task.name.contains("CMake") || task.name.contains("externalNativeBuild") || task.name.contains("prefab") || task.name.contains("NativeLibs")) {
-                task.doNotTrackState("Windows NDK symlink snapshot workaround for react-native-worklets")
+subprojects { subproject ->
+    subproject.afterEvaluate {
+        subproject.tasks.configureEach { task ->
+            if (task.name.contains("NativeLibs") || task.name.contains("CMake") || task.name.contains("prefab") || task.name.contains("externalNativeBuild") || task.name.contains("bundleReleaseAar")) {
+                task.doNotTrackState("Windows symlink workaround")
             }
         }
     }
