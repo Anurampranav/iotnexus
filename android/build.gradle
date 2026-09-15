@@ -24,11 +24,18 @@ apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
 
 subprojects { subproject ->
-    subproject.afterEvaluate {
+    def applyTaskConfig = {
         subproject.tasks.configureEach { task ->
             if (task.name.contains("NativeLibs") || task.name.contains("CMake") || task.name.contains("prefab") || task.name.contains("externalNativeBuild") || task.name.contains("bundleReleaseAar")) {
                 task.doNotTrackState("Windows symlink workaround")
             }
+        }
+    }
+    if (subproject.state.executed) {
+        applyTaskConfig()
+    } else {
+        subproject.afterEvaluate {
+            applyTaskConfig()
         }
     }
 }
