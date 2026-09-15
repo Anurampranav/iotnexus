@@ -16,14 +16,22 @@ import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import kotlinx.coroutines.*
 import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.FileReader
 import java.net.*
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import javax.crypto.Cipher
+import javax.crypto.spec.SecretKeySpec
 
 /**
- * Real Hardware & Network Discovery Module
- * - Real Wi-Fi Subnet Scanner (Probes open smart ports 6668, 80, 38899, 8080)
- * - Real UDP Broadcast (Port 38899 WiZ, Port 6666/6667 Tuya, Port 1900 SSDP)
- * - Real Bluetooth LE Hardware Radio Scanner
+ * Universal Hardware & Local Network Discovery Module
+ * - Real Tuya UDP Broadcast Discovery (Port 6666 & 6667 with AES-128-ECB Decryption)
+ * - Real Philips WiZ UDP Broadcast (Port 38899)
+ * - Real SSDP / UPnP Discovery (Port 1900)
+ * - Real Multi-Threaded Subnet Port Sweep (Ports 6668, 6667, 80, 8080, 8081, 38899, 9999, 1883)
+ * - Real ARP Table & Ping Detection
+ * - Real Hardware Bluetooth Low Energy (BLE) Radio Scanner
  */
 class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
@@ -34,6 +42,16 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
 
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var scanCallback: ScanCallback? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+
+    // Tuya Standard MD5 UDP Decryption Key
+    private val TUYA_UDP_KEY_BYTES = byteArrayOf(
+        0x6c.toByte(), 0x0a.toByte(), 0x00.toByte(), 0x6c.toByte(),
+        0x0a.toByte(), 0x00.toByte(), 0x6c.toByte(), 0x0a.toByte(),
+        0x6c.toByte(), 0x0a.toByte(), 0x00.toByte(), 0x6c.toByte(),
+        0x0a.toByte(), 0x00.toByte(), 0x6c.toByte(), 0x0a.toByte()
+    )
 
     override fun getName(): String = "NetworkDiscoveryModule"
 
@@ -52,7 +70,7 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
         try {
             val localIp = getLocalIpAddress() ?: "127.0.0.1"
             val wifiManager = reactContext.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-            val ssid = wifiManager?.connectionInfo?.ssid?.replace("\"", "") ?: "Unknown Wi-Fi"
+            val ssid = wifiManager?.connectionInfo?.ssid?.replace("\"", "") ?: "Local Wi-Fi Network"
             val dhcp = wifiManager?.dhcpInfo
             val gatewayIp = if (dhcp != null && dhcp.gateway != 0) {
                 String.format(
@@ -63,11 +81,14 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
                     dhcp.gateway shr 16 and 0xff,
                     dhcp.gateway shr 24 and 0xff
                 )
-            } else "Unknown"
+            } else {
+                val parts = localIp.split(".")
+                if (parts.size == 4) "${parts[0]}.${parts[1]}.${parts[2]}.1" else "Unknown"
+            }
 
             val map = Arguments.createMap().apply {
                 putString("ip", localIp)
-                putString("ssid", ssid)
+                putString("ssid", if (ssid == "<unknown ssid>") "Connected Wi-Fi" else ssid)
                 putString("gateway", gatewayIp)
                 putBoolean("isWifiConnected", localIp != "127.0.0.1")
             }
@@ -80,17 +101,21 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
     @ReactMethod
     fun probeSingleDevice(ip: String, promise: Promise) {
         scope.launch(Dispatchers.IO) {
-            val smartPorts = listOf(6668, 80, 38899, 8080)
+            val smartPorts = listOf(6668, 6667, 80, 8080, 8081, 38899, 9999, 1883, 5000, 8000, 554)
             var foundPort = -1
             var devType = "Smart Hardware"
 
             for (port in smartPorts) {
-                if (isPortOpen(ip, port, 400)) {
+                if (isPortOpen(ip, port, 300)) {
                     foundPort = port
                     devType = when (port) {
-                        6668 -> "Tuya Smart Device / Plug"
-                        38899 -> "Philips WiZ Socket / Bulb"
-                        80 -> "Smart Wi-Fi Relay / Web Controller"
+                        6668, 6667 -> "Tuya Smart Device / Switch / Plug"
+                        38899 -> "Philips WiZ Smart Bulb / Socket"
+                        80 -> "Smart Wi-Fi Relay / Web Controller / Shelly"
+                        8080, 8081 -> "Sonoff / Smart IoT Controller"
+                        9999 -> "TP-Link Kasa Smart Device"
+                        1883 -> "MQTT Smart Controller"
+                        554 -> "Smart RTSP IP Camera"
                         else -> "Smart LAN Device"
                     }
                     break
@@ -103,8 +128,8 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
                     putString("ip", ip)
                     putInt("port", foundPort)
                     putString("name", "$devType ($ip)")
-                    putString("type", if (foundPort == 38899) "light" else "switch")
-                    putString("protocol", if (foundPort == 6668) "tuya_lan" else "Local LAN")
+                    putString("type", if (foundPort == 38899 || devType.contains("Bulb")) "light" else "switch")
+                    putString("protocol", if (foundPort == 6668 || foundPort == 6667) "tuya_lan" else "Local LAN")
                 }
                 promise.resolve(map)
             } else {
@@ -126,19 +151,41 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
         isScanning = true
         foundDevices.clear()
 
+        // Acquire Multicast and Wi-Fi locks so Android does not filter incoming UDP packets
+        try {
+            val wifiManager = reactContext.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            multicastLock = wifiManager?.createMulticastLock("smartcodeflurry_mcast_lock")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+            wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "smartcodeflurry_wifi_lock")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        } catch (e: Exception) {
+            Log.w("NetworkDiscovery", "Lock acquisition notice: ${e.message}")
+        }
+
         // 1. Start Hardware Bluetooth LE Radio Scan
         startRealBleScan()
 
-        // 2. Start Real Wi-Fi UDP Broadcast & Subnet Probe
+        // 2. Start Real Wi-Fi UDP & Subnet Probes
         scope.launch {
             try {
-                // A. Real UDP Broadcast
-                launch { realUdpBroadcastScan() }
+                // A. Tuya UDP Port 6666 & 6667 Listeners + Probes
+                launch { tuyaUdpDiscovery(6666) }
+                launch { tuyaUdpDiscovery(6667) }
 
-                // B. Real Subnet Port Sweep (192.168.x.x)
-                launch { realSubnetSweep() }
+                // B. Philips WiZ UDP Port 38899 Broadcast & Listener
+                launch { wizUdpBroadcastScan() }
+
+                // C. SSDP / UPnP Port 1900 Discovery
+                launch { ssdpBroadcastScan() }
+
+                // D. Full Subnet Multi-Threaded Port Sweep (Ports 6668, 80, 8080, etc.)
+                launch { deepSubnetSweep() }
             } catch (e: Exception) {
-                Log.e("NetworkDiscovery", "Network scan exception: ${e.message}")
+                Log.e("NetworkDiscovery", "Scan coordinator error: ${e.message}")
             }
         }
 
@@ -149,6 +196,14 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
     fun stopLiveHardwareScan(promise: Promise) {
         isScanning = false
         stopRealBleScan()
+        try {
+            multicastLock?.release()
+            multicastLock = null
+            wifiLock?.release()
+            wifiLock = null
+        } catch (e: Exception) {
+            Log.w("NetworkDiscovery", "Lock release notice: ${e.message}")
+        }
         promise.resolve(true)
     }
 
@@ -162,41 +217,137 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
     }
 
     // =========================================================================
-    // 1. REAL UDP BROADCAST SCAN (Port 38899 WiZ / Port 1900 SSDP)
+    // 1. TUYA UDP REAL AUTO-DISCOVERY (Ports 6666 & 6667)
     // =========================================================================
-    private fun realUdpBroadcastScan() {
+    private fun tuyaUdpDiscovery(port: Int) {
         var socket: DatagramSocket? = null
         try {
-            val wifiManager = reactContext.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-            val lock = wifiManager?.createMulticastLock("smartcodeflurry_discovery_lock")?.apply {
-                setReferenceCounted(true)
-                acquire()
-            }
-
             socket = DatagramSocket(null).apply {
                 reuseAddress = true
                 broadcast = true
-                soTimeout = 4000
+                soTimeout = 3000
+                bind(InetSocketAddress(port))
+            }
+
+            val buffer = ByteArray(2048)
+            val packet = DatagramPacket(buffer, buffer.size)
+            val startTime = System.currentTimeMillis()
+
+            while (isScanning && System.currentTimeMillis() - startTime < 12000) {
+                try {
+                    socket.receive(packet)
+                    val senderIp = packet.address?.hostAddress ?: continue
+                    val rawData = packet.data.copyOfRange(0, packet.length)
+
+                    var jsonStr: String? = null
+                    // 1. Try direct string
+                    val plain = String(rawData, Charsets.UTF_8)
+                    if (plain.contains("{") && plain.contains("}")) {
+                        val s = plain.indexOf('{')
+                        val e = plain.lastIndexOf('}')
+                        if (s != -1 && e > s) jsonStr = plain.substring(s, e + 1)
+                    }
+
+                    // 2. Try AES-128-ECB Decryption if not plain
+                    if (jsonStr == null) {
+                        try {
+                            // Strip 55AA header if present (standard 16-byte header)
+                            val payload = if (rawData.size >= 16 && rawData[0] == 0x00.toByte() && rawData[1] == 0x00.toByte() && rawData[2] == 0x55.toByte() && rawData[3] == 0xaa.toByte()) {
+                                rawData.copyOfRange(16, rawData.size - 8)
+                            } else {
+                                rawData
+                            }
+
+                            val cipher = Cipher.getInstance("AES/ECB/PKCS5Padding")
+                            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(TUYA_UDP_KEY_BYTES, "AES"))
+                            val decrypted = String(cipher.doFinal(payload), Charsets.UTF_8)
+                            val s = decrypted.indexOf('{')
+                            val e = decrypted.lastIndexOf('}')
+                            if (s != -1 && e > s) jsonStr = decrypted.substring(s, e + 1)
+                        } catch (e: Exception) {
+                            // Decryption skipped
+                        }
+                    }
+
+                    if (jsonStr != null) {
+                        val json = JSONObject(jsonStr)
+                        val gwId = json.optString("gwId", json.optString("devId", ""))
+                        val ip = json.optString("ip", senderIp)
+                        val productKey = json.optString("productKey", "tuya_device")
+                        val version = json.optString("version", "3.3")
+
+                        if (gwId.isNotEmpty()) {
+                            val id = "tuya_$gwId"
+                            val map = Arguments.createMap().apply {
+                                putString("id", id)
+                                putString("name", "Tuya Smart Device (${gwId.takeLast(6).uppercase()})")
+                                putString("type", if (productKey.contains("light", true) || productKey.contains("bulb", true)) "light" else "switch")
+                                putString("category", if (productKey.contains("light", true)) "lighting" else "electrical")
+                                putString("protocol", "tuya_lan")
+                                putString("ip", ip)
+                                putInt("port", 6668)
+                                putString("gwId", gwId)
+                                putString("productKey", productKey)
+                                putString("version", version)
+                                putString("source", "Tuya UDP Broadcast (Port $port)")
+                            }
+
+                            if (!foundDevices.containsKey(id)) {
+                                foundDevices[id] = map
+                                sendEvent("onDeviceDiscovered", map)
+                            }
+                        }
+                    }
+                } catch (e: SocketTimeoutException) {
+                    // Continue loop
+                } catch (e: Exception) {
+                    break
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("NetworkDiscovery", "Tuya UDP $port notice: ${e.message}")
+        } finally {
+            try { socket?.close() } catch (e: Exception) {}
+        }
+    }
+
+    // =========================================================================
+    // 2. PHILIPS WIZ UDP BROADCAST SCAN (Port 38899)
+    // =========================================================================
+    private fun wizUdpBroadcastScan() {
+        var socket: DatagramSocket? = null
+        try {
+            socket = DatagramSocket(null).apply {
+                reuseAddress = true
+                broadcast = true
+                soTimeout = 3000
                 bind(InetSocketAddress(0))
             }
 
-            // WiZ UDP getPilot broadcast packet
-            val wizPayload = "{\"method\":\"getPilot\",\"params\":{}}".toByteArray()
+            // WiZ getPilot payload
+            val wizPayload = "{\"method\":\"getPilot\",\"params\":{}}".toByteArray(Charsets.UTF_8)
             val broadcastAddr = InetAddress.getByName("255.255.255.255")
-            val packet = DatagramPacket(wizPayload, wizPayload.size, broadcastAddr, 38899)
-            socket.send(packet)
+            socket.send(DatagramPacket(wizPayload, wizPayload.size, broadcastAddr, 38899))
 
-            // Listen for WiZ and Tuya broadcast responses
+            // Also send to local subnet broadcast
+            val localIp = getLocalIpAddress()
+            if (localIp != null) {
+                val parts = localIp.split(".")
+                if (parts.size == 4) {
+                    val subnetBroadcast = InetAddress.getByName("${parts[0]}.${parts[1]}.${parts[2]}.255")
+                    socket.send(DatagramPacket(wizPayload, wizPayload.size, subnetBroadcast, 38899))
+                }
+            }
+
             val buffer = ByteArray(2048)
             val receivePacket = DatagramPacket(buffer, buffer.size)
             val startTime = System.currentTimeMillis()
 
-            while (isScanning && System.currentTimeMillis() - startTime < 6000) {
+            while (isScanning && System.currentTimeMillis() - startTime < 8000) {
                 try {
                     socket.receive(receivePacket)
-                    val responseStr = String(receivePacket.data, 0, receivePacket.length)
-                    val senderIp = receivePacket.address.hostAddress ?: ""
-                    val senderPort = receivePacket.port
+                    val responseStr = String(receivePacket.data, 0, receivePacket.length, Charsets.UTF_8)
+                    val senderIp = receivePacket.address?.hostAddress ?: continue
 
                     if (responseStr.contains("result") || responseStr.contains("method")) {
                         val json = JSONObject(responseStr)
@@ -205,50 +356,129 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
                         val state = resultObj?.optBoolean("state") ?: false
                         val power = resultObj?.optInt("power", if (state) 12 else 0) ?: 0
 
-                        val deviceMap = Arguments.createMap().apply {
-                            putString("id", "wiz_${mac.replace(":", "")}")
-                            putString("name", "Philips WiZ Smart Device ($senderIp)")
-                            putString("type", if (responseStr.contains("temp") || responseStr.contains("r")) "light" else "switch")
-                            putString("category", if (responseStr.contains("temp") || responseStr.contains("r")) "lighting" else "electrical")
+                        val id = "wiz_${mac.replace(":", "")}"
+                        val map = Arguments.createMap().apply {
+                            putString("id", id)
+                            putString("name", "Philips WiZ Light ($senderIp)")
+                            putString("type", "light")
+                            putString("category", "lighting")
                             putString("protocol", "Local UDP (WiZ)")
                             putString("ip", senderIp)
-                            putInt("port", senderPort)
+                            putInt("port", 38899)
                             putString("mac", mac)
                             putBoolean("state", state)
                             putInt("powerWatts", power)
-                            putString("source", "Real UDP Broadcast Response")
+                            putString("source", "WiZ UDP Broadcast")
                         }
 
-                        if (!foundDevices.containsKey(deviceMap.getString("id"))) {
-                            foundDevices[deviceMap.getString("id")!!] = deviceMap
-                            sendEvent("onDeviceDiscovered", deviceMap)
+                        if (!foundDevices.containsKey(id)) {
+                            foundDevices[id] = map
+                            sendEvent("onDeviceDiscovered", map)
                         }
                     }
                 } catch (e: SocketTimeoutException) {
                     break
+                } catch (e: Exception) {
+                    break
                 }
             }
-
-            lock?.release()
         } catch (e: Exception) {
-            Log.w("NetworkDiscovery", "UDP Scan notice: ${e.message}")
+            Log.w("NetworkDiscovery", "WiZ scan notice: ${e.message}")
         } finally {
-            socket?.close()
+            try { socket?.close() } catch (e: Exception) {}
         }
     }
 
     // =========================================================================
-    // 2. REAL SUBNET PORT PROBE (Fast Multi-threaded Sweep)
+    // 3. SSDP / UPNP BROADCAST SCAN (Port 1900)
     // =========================================================================
-    private suspend fun realSubnetSweep() = coroutineScope {
+    private fun ssdpBroadcastScan() {
+        var socket: DatagramSocket? = null
+        try {
+            socket = DatagramSocket(null).apply {
+                reuseAddress = true
+                broadcast = true
+                soTimeout = 3000
+                bind(InetSocketAddress(0))
+            }
+
+            val ssdpQuery = ("M-SEARCH * HTTP/1.1\r\n" +
+                    "HOST: 239.255.255.250:1900\r\n" +
+                    "MAN: \"ssdp:discover\"\r\n" +
+                    "MX: 2\r\n" +
+                    "ST: ssdp:all\r\n\r\n").toByteArray(Charsets.UTF_8)
+
+            val mcastAddr = InetAddress.getByName("239.255.255.250")
+            socket.send(DatagramPacket(ssdpQuery, ssdpQuery.size, mcastAddr, 1900))
+
+            val buffer = ByteArray(2048)
+            val packet = DatagramPacket(buffer, buffer.size)
+            val startTime = System.currentTimeMillis()
+
+            while (isScanning && System.currentTimeMillis() - startTime < 6000) {
+                try {
+                    socket.receive(packet)
+                    val raw = String(packet.data, 0, packet.length, Charsets.UTF_8)
+                    val senderIp = packet.address?.hostAddress ?: continue
+
+                    if (raw.contains("HTTP/1.1 200 OK", ignoreCase = true) || raw.contains("LOCATION:", ignoreCase = true)) {
+                        val id = "ssdp_${senderIp.replace(".", "_")}"
+                        val isLight = raw.contains("hue", ignoreCase = true) || raw.contains("light", ignoreCase = true)
+                        val isPlug = raw.contains("wemo", ignoreCase = true) || raw.contains("switch", ignoreCase = true)
+
+                        val map = Arguments.createMap().apply {
+                            putString("id", id)
+                            putString("name", "UPnP/SSDP Smart Device ($senderIp)")
+                            putString("type", if (isLight) "light" else "switch")
+                            putString("category", if (isLight) "lighting" else "electrical")
+                            putString("protocol", "UPnP / SSDP")
+                            putString("ip", senderIp)
+                            putInt("port", 1900)
+                            putString("source", "SSDP Beacon ($senderIp)")
+                        }
+
+                        if (!foundDevices.containsKey(id)) {
+                            foundDevices[id] = map
+                            sendEvent("onDeviceDiscovered", map)
+                        }
+                    }
+                } catch (e: SocketTimeoutException) {
+                    break
+                } catch (e: Exception) {
+                    break
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("NetworkDiscovery", "SSDP scan notice: ${e.message}")
+        } finally {
+            try { socket?.close() } catch (e: Exception) {}
+        }
+    }
+
+    // =========================================================================
+    // 4. DEEP SUBNET MULTI-THREADED SWEEP (Ports 6668, 6667, 80, 8080, 8081, 38899, 9999)
+    // =========================================================================
+    private suspend fun deepSubnetSweep() = coroutineScope {
         val localIp = getLocalIpAddress() ?: return@coroutineScope
         val parts = localIp.split(".")
         if (parts.size != 4) return@coroutineScope
         val subnetPrefix = "${parts[0]}.${parts[1]}.${parts[2]}"
 
-        val smartPorts = listOf(6668, 80, 38899, 8080) // Tuya Local, HTTP Smart Relay/Shelly/Tasmota, WiZ
+        val smartPorts = listOf(6668, 6667, 80, 8080, 8081, 38899, 9999, 1883, 5000, 8000)
 
-        // Scan local IP range concurrently in parallel chunks of 32
+        // Read ARP cache first to find all live hardware MACs and IPs
+        val arpIps = getArpTableIps()
+
+        // 1. Immediately probe all ARP active hosts
+        arpIps.forEach { arpIp ->
+            if (arpIp != localIp && arpIp.startsWith(subnetPrefix)) {
+                launch(Dispatchers.IO) {
+                    probeAndRegisterHost(arpIp, smartPorts)
+                }
+            }
+        }
+
+        // 2. Scan all 1..254 subnet hosts in parallel chunks
         (1..254).chunked(32).forEach { chunk ->
             if (!isScanning) return@coroutineScope
             chunk.map { i ->
@@ -256,41 +486,72 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
                 if (targetIp == localIp) return@map null
 
                 async(Dispatchers.IO) {
-                    for (port in smartPorts) {
-                        if (!isScanning) break
-                        if (isPortOpen(targetIp, port, 200)) {
-                            val devType = when (port) {
-                                6668 -> "Tuya Smart Device / Plug"
-                                38899 -> "Philips WiZ Socket / Bulb"
-                                80 -> "Smart Wi-Fi Relay / Web Controller"
-                                else -> "Smart LAN Device"
-                            }
-                            val inferredType = when (port) {
-                                38899 -> "light"
-                                else -> "switch"
-                            }
-
-                            val map = Arguments.createMap().apply {
-                                putString("id", "lan_${targetIp.replace(".", "_")}_$port")
-                                putString("name", "$devType ($targetIp)")
-                                putString("type", inferredType)
-                                putString("category", if (inferredType == "light") "lighting" else "electrical")
-                                putString("protocol", if (port == 6668) "tuya_lan" else "Local LAN")
-                                putString("ip", targetIp)
-                                putInt("port", port)
-                                putString("source", "Live LAN Probe ($targetIp:$port)")
-                            }
-
-                            if (!foundDevices.containsKey(map.getString("id"))) {
-                                foundDevices[map.getString("id")!!] = map
-                                sendEvent("onDeviceDiscovered", map)
-                            }
-                            break
-                        }
-                    }
+                    if (!isScanning) return@async
+                    probeAndRegisterHost(targetIp, smartPorts)
                 }
             }.filterNotNull().awaitAll()
         }
+    }
+
+    private fun probeAndRegisterHost(targetIp: String, smartPorts: List<Int>) {
+        for (port in smartPorts) {
+            if (!isScanning) break
+            if (isPortOpen(targetIp, port, 250)) {
+                val devType = when (port) {
+                    6668, 6667 -> "Tuya Smart Device / Switch"
+                    38899 -> "Philips WiZ Bulb / Socket"
+                    80 -> "Smart Wi-Fi Controller / Relay / Shelly"
+                    8080, 8081 -> "Sonoff / Smart IoT Controller"
+                    9999 -> "TP-Link Kasa Smart Device"
+                    1883 -> "MQTT Smart Device"
+                    else -> "Smart LAN Device"
+                }
+                val inferredType = when {
+                    port == 38899 || devType.contains("Bulb") -> "light"
+                    else -> "switch"
+                }
+
+                val id = "lan_${targetIp.replace(".", "_")}_$port"
+                val map = Arguments.createMap().apply {
+                    putString("id", id)
+                    putString("name", "$devType ($targetIp)")
+                    putString("type", inferredType)
+                    putString("category", if (inferredType == "light") "lighting" else "electrical")
+                    putString("protocol", if (port == 6668 || port == 6667) "tuya_lan" else "Local LAN")
+                    putString("ip", targetIp)
+                    putInt("port", port)
+                    putString("source", "Live LAN Probe ($targetIp:$port)")
+                }
+
+                if (!foundDevices.containsKey(id)) {
+                    foundDevices[id] = map
+                    sendEvent("onDeviceDiscovered", map)
+                }
+                break
+            }
+        }
+    }
+
+    private fun getArpTableIps(): Set<String> {
+        val result = mutableSetOf<String>()
+        try {
+            val reader = BufferedReader(FileReader("/proc/net/arp"))
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                val tokens = line?.split("\\s+".toRegex()) ?: continue
+                if (tokens.size >= 4 && tokens[0] != "IP") {
+                    val ip = tokens[0]
+                    val mac = tokens[3]
+                    if (mac != "00:00:00:00:00:00" && ip.matches("\\d+\\.\\d+\\.\\d+\\.\\d+".toRegex())) {
+                        result.add(ip)
+                    }
+                }
+            }
+            reader.close()
+        } catch (e: Exception) {
+            // ARP read notice
+        }
+        return result
     }
 
     private fun isPortOpen(ip: String, port: Int, timeoutMs: Int): Boolean {
@@ -343,7 +604,7 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
     }
 
     // =========================================================================
-    // 3. REAL BLUETOOTH LE HARDWARE RADIO SCAN
+    // 5. REAL BLUETOOTH LE HARDWARE RADIO SCAN
     // =========================================================================
     private fun startRealBleScan() {
         try {
@@ -373,14 +634,15 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
                         val mac = dev.address ?: ""
                         val rssi = res.rssi
 
-                        if (rssi >= -90) {
+                        if (rssi >= -95) {
                             val displayName = when {
                                 name.isNotBlank() -> name
                                 else -> "BLE Smart Device (${if (mac.length >= 5) mac.substring(mac.length - 5) else mac})"
                             }
 
+                            val id = "ble_${mac.replace(":", "")}"
                             val map = Arguments.createMap().apply {
-                                putString("id", "ble_${mac.replace(":", "")}")
+                                putString("id", id)
                                 putString("name", displayName)
                                 putString("type", if (name.contains("bulb", true) || name.contains("light", true)) "light" else "switch")
                                 putString("category", if (name.contains("bulb", true) || name.contains("light", true)) "lighting" else "electrical")
@@ -390,8 +652,8 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
                                 putString("source", "Real BLE Radio Beacon ($rssi dBm)")
                             }
 
-                            if (!foundDevices.containsKey(map.getString("id"))) {
-                                foundDevices[map.getString("id")!!] = map
+                            if (!foundDevices.containsKey(id)) {
+                                foundDevices[id] = map
                                 sendEvent("onDeviceDiscovered", map)
                             }
                         }

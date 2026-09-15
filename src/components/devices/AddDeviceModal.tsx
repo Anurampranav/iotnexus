@@ -173,14 +173,14 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ visible, onClose
         });
       }
 
-      // 2. Trigger native phone hardware radio scan
+      // 2. Trigger native phone hardware radio scan (Tuya UDP, WiZ, SSDP, Subnet & BLE)
       if (NativeModules.NetworkDiscoveryModule) {
         NativeModules.NetworkDiscoveryModule.startLiveHardwareScan();
       }
     } catch (e) {
       console.warn('[AddDeviceModal] Discovery fetch notice:', e);
     } finally {
-      setTimeout(() => setIsScanning(false), 4000);
+      setTimeout(() => setIsScanning(false), 12000);
     }
   };
 
@@ -391,7 +391,17 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ visible, onClose
                 {/* Pending Devices List */}
                 {pendingDevices.length > 0 ? (
                   <View>
-                    <Text style={styles.sectionHeader}>DISCOVERED HARDWARE ({pendingDevices.length})</Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                      <Text style={styles.sectionHeader}>DISCOVERED HARDWARE ({pendingDevices.length})</Text>
+                      <TouchableOpacity
+                        onPress={startFullDiscovery}
+                        disabled={isScanning}
+                        style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(59, 130, 246, 0.15)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}
+                      >
+                        <MaterialCommunityIcons name="refresh" size={14} color={Colors.primary} style={{ marginRight: 4 }} />
+                        <Text style={{ color: Colors.primary, fontSize: 12, fontWeight: '700' }}>{isScanning ? 'Scanning...' : 'Rescan'}</Text>
+                      </TouchableOpacity>
+                    </View>
                     {pendingDevices.map((item) => {
                       const isAdopting = adoptingId === item.id;
                       return (
