@@ -12,6 +12,8 @@ import {
   NativeModules,
   NativeEventEmitter,
   TextInput,
+  Platform,
+  PermissionsAndroid,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { GlassCard } from '@components/glass/GlassCard';
@@ -26,17 +28,27 @@ interface AddDeviceModalProps {
   onClose: () => void;
 }
 
+interface NetworkInfo {
+  ip: string;
+  ssid: string;
+  gateway: string;
+  isWifiConnected: boolean;
+}
+
 export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ visible, onClose }) => {
   const [activeTab, setActiveTab] = useState<'scan' | 'manual'>('scan');
   const [isScanning, setIsScanning] = useState(false);
   const [pendingDevices, setPendingDevices] = useState<PendingDevice[]>([]);
   const [adoptingId, setAdoptingId] = useState<string | null>(null);
+  const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null);
 
   // Manual Add Form States
   const [manualName, setManualName] = useState('');
   const [manualIp, setManualIp] = useState('');
   const [manualType, setManualType] = useState<DeviceType>('switch');
   const [manualRoom, setManualRoom] = useState('Utility Area');
+  const [isProbing, setIsProbing] = useState(false);
+  const [probeResult, setProbeResult] = useState<string | null>(null);
 
   const [pulseAnim] = useState(new Animated.Value(1));
 
@@ -44,7 +56,10 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ visible, onClose
     let eventSubscription: any = null;
 
     if (visible) {
-      startFullDiscovery();
+      requestAndroidPermissions().then(() => {
+        fetchNetworkDiagnostics();
+        startFullDiscovery();
+      });
 
       // Start Radar Animation
       Animated.loop(
@@ -109,6 +124,40 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ visible, onClose
     };
   }, [visible]);
 
+  const requestAndroidPermissions = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        const permissions: any[] = [
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+        ];
+        if (Platform.Version >= 31) {
+          permissions.push(
+            PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+            PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT
+          );
+        }
+        if (Platform.Version >= 33) {
+          permissions.push('android.permission.NEARBY_WIFI_DEVICES');
+        }
+        await PermissionsAndroid.requestMultiple(permissions);
+      } catch (e) {
+        console.warn('Permission request notice:', e);
+      }
+    }
+  };
+
+  const fetchNetworkDiagnostics = async () => {
+    if (NativeModules.NetworkDiscoveryModule?.getNetworkInfo) {
+      try {
+        const info = await NativeModules.NetworkDiscoveryModule.getNetworkInfo();
+        setNetworkInfo(info);
+      } catch (e) {
+        console.warn('Network info error:', e);
+      }
+    }
+  };
+
   const startFullDiscovery = async () => {
     setIsScanning(true);
     try {
@@ -131,7 +180,36 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ visible, onClose
     } catch (e) {
       console.warn('[AddDeviceModal] Discovery fetch notice:', e);
     } finally {
-      setTimeout(() => setIsScanning(false), 3000);
+      setTimeout(() => setIsScanning(false), 4000);
+    }
+  };
+
+  const handleTestProbe = async () => {
+    const trimmedIp = manualIp.trim();
+    if (!trimmedIp) {
+      Alert.alert('IP Required', 'Please enter your smart device IP address (e.g. 192.168.1.150).');
+      return;
+    }
+
+    setIsProbing(true);
+    setProbeResult(null);
+    try {
+      if (NativeModules.NetworkDiscoveryModule?.probeSingleDevice) {
+        const res = await NativeModules.NetworkDiscoveryModule.probeSingleDevice(trimmedIp);
+        if (res?.online) {
+          setProbeResult(`✔ Found: ${res.name} (Port ${res.port})`);
+          if (!manualName) setManualName(res.name);
+          if (res.type) setManualType(res.type);
+        } else {
+          setProbeResult(`⚠️ No response at ${trimmedIp}. Check if device is powered ON.`);
+        }
+      } else {
+        setProbeResult(`Ready to add ${trimmedIp}`);
+      }
+    } catch (e: any) {
+      setProbeResult(`Probe error: ${e.message}`);
+    } finally {
+      setIsProbing(false);
     }
   };
 
@@ -187,7 +265,7 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ visible, onClose
     const trimmedIp = manualIp.trim();
 
     const newDevice: Device = {
-      id: `dev_manual_${Date.now()}`,
+      id: `dev_${manualType}_${Date.now().toString().slice(-6)}`,
       name: trimmedName,
       type: manualType,
       manufacturer: 'Smart Hardware',
@@ -217,9 +295,10 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ visible, onClose
       devices: [newDevice, ...state.devices.filter((d) => d.id !== newDevice.id)],
     }));
 
-    Alert.alert('Device Created', `${newDevice.name} added to ${manualRoom}!`);
+    Alert.alert('Device Connected', `${newDevice.name} added to ${manualRoom}!`);
     setManualName('');
     setManualIp('');
+    setProbeResult(null);
     onClose();
   };
 
@@ -244,6 +323,20 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ visible, onClose
               <MaterialCommunityIcons name="close" size={24} color={Colors.textPrimary} />
             </TouchableOpacity>
           </View>
+
+          {/* Wi-Fi Diagnostic Banner */}
+          {networkInfo && (
+            <View style={styles.netInfoBanner}>
+              <MaterialCommunityIcons
+                name={networkInfo.isWifiConnected ? 'wifi-check' : 'wifi-off'}
+                size={16}
+                color={networkInfo.isWifiConnected ? Colors.success : Colors.warning}
+              />
+              <Text style={styles.netInfoText}>
+                Wi-Fi: <Text style={styles.netInfoHighlight}>{networkInfo.ssid}</Text> ({networkInfo.ip})
+              </Text>
+            </View>
+          )}
 
           {/* Mode Switcher Tabs */}
           <View style={styles.tabRow}>
@@ -285,10 +378,10 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ visible, onClose
                   </Animated.View>
                   <Text style={styles.radarText}>
                     {isScanning
-                      ? 'Scanning Wi-Fi router & Bluetooth radios for smart hardware...'
+                      ? `Scanning subnet ${networkInfo?.ip?.split('.').slice(0, 3).join('.') || '192.168.x'}.x & Bluetooth...`
                       : pendingDevices.length > 0
                       ? `Found ${pendingDevices.length} discovered device(s) ready to add`
-                      : 'No broadcasting devices found yet.'}
+                      : 'No unassigned devices broadcasting on network.'}
                   </Text>
                   {isScanning && (
                     <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 8 }} />
@@ -343,7 +436,7 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ visible, onClose
                       <Text style={styles.emptyTitle}>Looking for new hardware...</Text>
                       <Text style={styles.emptyDesc}>
                         1. Ensure your Smart Plug, Water Pump Relay, or Bulb is powered ON.{'\n'}
-                        2. Make sure your phone is connected to the same 2.4GHz Wi-Fi router.{'\n'}
+                        2. Ensure phone is on the same 2.4GHz Wi-Fi network.{'\n'}
                         3. You can also tap "Direct / Manual Add" above to connect instantly!
                       </Text>
                       <TouchableOpacity style={styles.rescanBtn} onPress={startFullDiscovery}>
@@ -360,21 +453,40 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ visible, onClose
                 <Text style={styles.formLabel}>Device Name</Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="e.g. Borewell Pump, 16A Heavy Duty Plug"
+                  placeholder="e.g. Borewell Water Pump, 16A Smart Plug"
                   placeholderTextColor={Colors.textMuted}
                   value={manualName}
                   onChangeText={setManualName}
                 />
 
-                <Text style={styles.formLabel}>IP Address (Optional if on same Wi-Fi)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g. 192.168.1.150"
-                  placeholderTextColor={Colors.textMuted}
-                  value={manualIp}
-                  onChangeText={setManualIp}
-                  keyboardType="numeric"
-                />
+                <Text style={styles.formLabel}>Device IP Address (from Wi-Fi router)</Text>
+                <View style={styles.ipRow}>
+                  <TextInput
+                    style={[styles.input, { flex: 1 }]}
+                    placeholder="e.g. 192.168.1.150"
+                    placeholderTextColor={Colors.textMuted}
+                    value={manualIp}
+                    onChangeText={setManualIp}
+                    keyboardType="numeric"
+                  />
+                  <TouchableOpacity
+                    style={[styles.probeBtn, isProbing && styles.addBtnDisabled]}
+                    onPress={handleTestProbe}
+                    disabled={isProbing}
+                  >
+                    {isProbing ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.probeBtnText}>TEST</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                {probeResult && (
+                  <Text style={[styles.probeResultText, probeResult.startsWith('✔') ? styles.probeSuccess : styles.probeWarn]}>
+                    {probeResult}
+                  </Text>
+                )}
 
                 <Text style={styles.formLabel}>Device Type</Text>
                 <View style={styles.typeSelectorRow}>
@@ -455,7 +567,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#1E1B19',
     borderTopLeftRadius: Radius['2xl'],
     borderTopRightRadius: Radius['2xl'],
-    maxHeight: '88%',
+    maxHeight: '90%',
     paddingBottom: Spacing['2xl'],
   },
   header: {
@@ -482,6 +594,25 @@ const styles = StyleSheet.create({
   },
   closeBtn: {
     padding: Spacing.xs,
+  },
+  netInfoBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#262220',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#332F2C',
+  },
+  netInfoText: {
+    fontFamily: Typography.fontFamily.regular,
+    fontSize: Typography.fontSize.xs,
+    color: Colors.textSecondary,
+  },
+  netInfoHighlight: {
+    color: Colors.textPrimary,
+    fontWeight: '600',
   },
   tabRow: {
     flexDirection: 'row',
@@ -653,6 +784,36 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     borderWidth: 1,
     borderColor: '#383431',
+  },
+  ipRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    alignItems: 'center',
+  },
+  probeBtn: {
+    backgroundColor: '#383431',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    borderRadius: Radius.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  probeBtnText: {
+    fontFamily: Typography.fontFamily.bold,
+    fontSize: Typography.fontSize.xs,
+    color: Colors.primary,
+    fontWeight: 'bold',
+  },
+  probeResultText: {
+    fontFamily: Typography.fontFamily.medium,
+    fontSize: Typography.fontSize.xs,
+    marginTop: 6,
+  },
+  probeSuccess: {
+    color: Colors.success,
+  },
+  probeWarn: {
+    color: Colors.warning,
   },
   typeSelectorRow: {
     flexDirection: 'row',

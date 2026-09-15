@@ -21,10 +21,9 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Real Hardware & Network Discovery Module
- * - Real UDP Broadcast (Port 38899 WiZ / Port 1900 SSDP)
- * - Real Wi-Fi Subnet Scanner (Probes open smart ports 38899, 80, 6668 on 192.168.x.x)
+ * - Real Wi-Fi Subnet Scanner (Probes open smart ports 6668, 80, 38899, 8080)
+ * - Real UDP Broadcast (Port 38899 WiZ, Port 6666/6667 Tuya, Port 1900 SSDP)
  * - Real Bluetooth LE Hardware Radio Scanner
- * ZERO hardcoding. Only real live devices broadcasting on the network or air are returned.
  */
 class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
@@ -49,6 +48,76 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
     }
 
     @ReactMethod
+    fun getNetworkInfo(promise: Promise) {
+        try {
+            val localIp = getLocalIpAddress() ?: "127.0.0.1"
+            val wifiManager = reactContext.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val ssid = wifiManager?.connectionInfo?.ssid?.replace("\"", "") ?: "Unknown Wi-Fi"
+            val dhcp = wifiManager?.dhcpInfo
+            val gatewayIp = if (dhcp != null && dhcp.gateway != 0) {
+                String.format(
+                    java.util.Locale.US,
+                    "%d.%d.%d.%d",
+                    dhcp.gateway and 0xff,
+                    dhcp.gateway shr 8 and 0xff,
+                    dhcp.gateway shr 16 and 0xff,
+                    dhcp.gateway shr 24 and 0xff
+                )
+            } else "Unknown"
+
+            val map = Arguments.createMap().apply {
+                putString("ip", localIp)
+                putString("ssid", ssid)
+                putString("gateway", gatewayIp)
+                putBoolean("isWifiConnected", localIp != "127.0.0.1")
+            }
+            promise.resolve(map)
+        } catch (e: Exception) {
+            promise.reject("ERR_NET_INFO", e.message)
+        }
+    }
+
+    @ReactMethod
+    fun probeSingleDevice(ip: String, promise: Promise) {
+        scope.launch(Dispatchers.IO) {
+            val smartPorts = listOf(6668, 80, 38899, 8080)
+            var foundPort = -1
+            var devType = "Smart Hardware"
+
+            for (port in smartPorts) {
+                if (isPortOpen(ip, port, 400)) {
+                    foundPort = port
+                    devType = when (port) {
+                        6668 -> "Tuya Smart Device / Plug"
+                        38899 -> "Philips WiZ Socket / Bulb"
+                        80 -> "Smart Wi-Fi Relay / Web Controller"
+                        else -> "Smart LAN Device"
+                    }
+                    break
+                }
+            }
+
+            if (foundPort != -1) {
+                val map = Arguments.createMap().apply {
+                    putBoolean("online", true)
+                    putString("ip", ip)
+                    putInt("port", foundPort)
+                    putString("name", "$devType ($ip)")
+                    putString("type", if (foundPort == 38899) "light" else "switch")
+                    putString("protocol", if (foundPort == 6668) "tuya_lan" else "Local LAN")
+                }
+                promise.resolve(map)
+            } else {
+                val map = Arguments.createMap().apply {
+                    putBoolean("online", false)
+                    putString("ip", ip)
+                }
+                promise.resolve(map)
+            }
+        }
+    }
+
+    @ReactMethod
     fun startLiveHardwareScan(promise: Promise) {
         if (isScanning) {
             promise.resolve(true)
@@ -57,13 +126,13 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
         isScanning = true
         foundDevices.clear()
 
-        // 1. Start Real Hardware Bluetooth LE Radio Scan
+        // 1. Start Hardware Bluetooth LE Radio Scan
         startRealBleScan()
 
         // 2. Start Real Wi-Fi UDP Broadcast & Subnet Probe
         scope.launch {
             try {
-                // A. Real UDP Broadcast on 38899 (WiZ / Philips)
+                // A. Real UDP Broadcast
                 launch { realUdpBroadcastScan() }
 
                 // B. Real Subnet Port Sweep (192.168.x.x)
@@ -93,7 +162,7 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
     }
 
     // =========================================================================
-    // 1. REAL UDP BROADCAST SCAN (Port 38899 WiZ / Philips)
+    // 1. REAL UDP BROADCAST SCAN (Port 38899 WiZ / Port 1900 SSDP)
     // =========================================================================
     private fun realUdpBroadcastScan() {
         var socket: DatagramSocket? = null
@@ -179,7 +248,7 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
 
         val smartPorts = listOf(6668, 80, 38899, 8080) // Tuya Local, HTTP Smart Relay/Shelly/Tasmota, WiZ
 
-        // Scan local IP range concurrently in parallel chunks
+        // Scan local IP range concurrently in parallel chunks of 32
         (1..254).chunked(32).forEach { chunk ->
             if (!isScanning) return@coroutineScope
             chunk.map { i ->
@@ -189,7 +258,7 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
                 async(Dispatchers.IO) {
                     for (port in smartPorts) {
                         if (!isScanning) break
-                        if (isPortOpen(targetIp, port, 180)) {
+                        if (isPortOpen(targetIp, port, 200)) {
                             val devType = when (port) {
                                 6668 -> "Tuya Smart Device / Plug"
                                 38899 -> "Philips WiZ Socket / Bulb"
@@ -237,18 +306,36 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
 
     private fun getLocalIpAddress(): String? {
         try {
+            val wifiManager = reactContext.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val ipInt = wifiManager?.connectionInfo?.ipAddress ?: 0
+            if (ipInt != 0) {
+                return String.format(
+                    java.util.Locale.US,
+                    "%d.%d.%d.%d",
+                    ipInt and 0xff,
+                    ipInt shr 8 and 0xff,
+                    ipInt shr 16 and 0xff,
+                    ipInt shr 24 and 0xff
+                )
+            }
+
             val interfaces = NetworkInterface.getNetworkInterfaces()
+            val candidateList = mutableListOf<String>()
             while (interfaces.hasMoreElements()) {
                 val iface = interfaces.nextElement()
                 if (iface.isLoopback || !iface.isUp) continue
+                val isWlan = iface.name.lowercase().contains("wlan") || iface.name.lowercase().contains("ap") || iface.name.lowercase().contains("eth")
                 val addresses = iface.inetAddresses
                 while (addresses.hasMoreElements()) {
                     val addr = addresses.nextElement()
                     if (addr is Inet4Address && !addr.isLoopbackAddress) {
-                        return addr.hostAddress
+                        val host = addr.hostAddress ?: continue
+                        if (isWlan) return host
+                        candidateList.add(host)
                     }
                 }
             }
+            return candidateList.firstOrNull { it.startsWith("192.168.") || it.startsWith("10.") || it.startsWith("172.") }
         } catch (e: Exception) {
             Log.w("NetworkDiscovery", "IP lookup notice: ${e.message}")
         }
@@ -286,8 +373,7 @@ class NetworkDiscoveryModule(private val reactContext: ReactApplicationContext) 
                         val mac = dev.address ?: ""
                         val rssi = res.rssi
 
-                        // Real physical radio filter: only devices with good signal in the room (RSSI >= -85dBm)
-                        if (rssi >= -85) {
+                        if (rssi >= -90) {
                             val displayName = when {
                                 name.isNotBlank() -> name
                                 else -> "BLE Smart Device (${if (mac.length >= 5) mac.substring(mac.length - 5) else mac})"
