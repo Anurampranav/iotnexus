@@ -21,6 +21,11 @@ interface SettingsStore {
   biometricEnabled: boolean;
   // Connectivity
   mqttAutoReconnect: boolean;
+  /**
+   * User-configured backend base URL (e.g. http://192.168.1.5:3000).
+   * Leave empty to operate in standalone / local-only mode.
+   */
+  backendUrl: string;
 
   // Setters
   setThemeMode: (mode: ThemeMode) => void;
@@ -32,6 +37,7 @@ interface SettingsStore {
   setAutoEvaluateEnabled: (val: boolean) => void;
   setBiometricEnabled: (val: boolean) => void;
   setMqttAutoReconnect: (val: boolean) => void;
+  setBackendUrl: (url: string) => void;
 }
 
 export const useSettingsStore = create<SettingsStore>((set) => ({
@@ -51,6 +57,7 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   biometricEnabled: false,
   // Connectivity
   mqttAutoReconnect: true,
+  backendUrl: '',
 
   setThemeMode: (mode) => set({ themeMode: mode }),
   setPushNotificationsEnabled: (val) => set({ pushNotificationsEnabled: val }),
@@ -61,4 +68,5 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   setAutoEvaluateEnabled: (val) => set({ autoEvaluateEnabled: val }),
   setBiometricEnabled: (val) => set({ biometricEnabled: val }),
   setMqttAutoReconnect: (val) => set({ mqttAutoReconnect: val }),
+  setBackendUrl: (url) => set({ backendUrl: url.trim() }),
 }));

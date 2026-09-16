@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, Switch,
+  ScrollView, Switch, TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSettingsStore } from '@store/settingsStore';
@@ -26,6 +26,13 @@ type SettingItem = {
 export default function SettingsScreen() {
   const router = useRouter();
   const settings = useSettingsStore();
+
+  // Local state for the backend URL input so it doesn't update the store on every keypress
+  const [backendUrlDraft, setBackendUrlDraft] = useState(settings.backendUrl);
+
+  const handleBackendUrlSave = () => {
+    settings.setBackendUrl(backendUrlDraft);
+  };
 
   const sections: Section[] = [
     {
@@ -234,6 +241,57 @@ export default function SettingsScreen() {
           </View>
         ))}
 
+        {/* Backend Server URL — live editable, no restart needed */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Backend Server</Text>
+          <GlassCard style={styles.card}>
+            <View style={styles.row}>
+              <View style={styles.rowLeft}>
+                <View style={styles.iconCircle}>
+                  <MaterialCommunityIcons name="server-network" size={18} color={Colors.textSecondary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowLabel}>Backend URL</Text>
+                  <Text style={styles.rowSublabel}>
+                    {settings.backendUrl ? `Active: ${settings.backendUrl}` : 'Not configured — standalone mode'}
+                  </Text>
+                </View>
+              </View>
+              {settings.backendUrl ? (
+                <MaterialCommunityIcons name="check-circle" size={18} color={Colors.success} />
+              ) : (
+                <MaterialCommunityIcons name="alert-circle-outline" size={18} color={Colors.warning} />
+              )}
+            </View>
+            <View style={[styles.row, styles.rowBorder, { borderBottomWidth: 0, paddingTop: 0 }]}>
+              <View style={styles.backendInputRow}>
+                <TextInput
+                  style={styles.backendInput}
+                  value={backendUrlDraft}
+                  onChangeText={setBackendUrlDraft}
+                  onBlur={handleBackendUrlSave}
+                  placeholder="http://192.168.1.x:3000"
+                  placeholderTextColor={Colors.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  returnKeyType="done"
+                  onSubmitEditing={handleBackendUrlSave}
+                />
+                <TouchableOpacity onPress={handleBackendUrlSave} style={styles.saveUrlBtn}>
+                  <Text style={styles.saveUrlBtnText}>SAVE</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </GlassCard>
+          <Text style={styles.backendHint}>
+            Enter your local server IP (e.g. the IP shown in your Wi-Fi router's DHCP table).{'\n'}
+            Leave blank to use standalone / local-scan mode only.
+          </Text>
+        </View>
+
+
+
         <View style={{ height: 40 }} />
       </ScrollView>
     </SafeAreaView>
@@ -321,4 +379,44 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginTop: 1,
   },
+  backendInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.glassBorder,
+    paddingHorizontal: Spacing.md,
+    marginTop: Spacing.xs,
+  },
+  backendInput: {
+    flex: 1,
+    fontFamily: Typography.fontFamily.regular,
+    fontSize: Typography.fontSize.sm,
+    color: Colors.textPrimary,
+    paddingVertical: Spacing.md,
+  },
+  saveUrlBtn: {
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    backgroundColor: Colors.primarySurface,
+    borderRadius: Radius.xs,
+    marginLeft: Spacing.sm,
+  },
+  saveUrlBtnText: {
+    fontFamily: Typography.fontFamily.bold,
+    fontSize: 10,
+    color: Colors.primary,
+    letterSpacing: 1,
+  },
+  backendHint: {
+    fontFamily: Typography.fontFamily.regular,
+    fontSize: Typography.fontSize.xs,
+    color: Colors.textMuted,
+    marginTop: Spacing.sm,
+    marginLeft: Spacing.xs,
+    lineHeight: 17,
+  },
+
 });
