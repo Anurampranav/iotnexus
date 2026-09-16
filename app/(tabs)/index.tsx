@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useDeviceStore } from '@store/deviceStore';
@@ -16,9 +16,15 @@ export default function HomeDashboardScreen() {
   const router = useRouter();
   const userName = useAppStore(s => s.userName);
 
-  const { devices, loadDevices, getOnlineCount, getOfflineCount, getFavorites, isLoading: devicesLoading } = useDeviceStore();
-  const { automations, loadAutomations, getActiveCount } = useAutomationStore();
-  const { notifications, loadNotifications, getUnreadCount } = useNotificationStore();
+  const devices = useDeviceStore(s => s.devices);
+  const loadDevices = useDeviceStore(s => s.loadDevices);
+  const devicesLoading = useDeviceStore(s => s.isLoading);
+
+  const automations = useAutomationStore(s => s.automations);
+  const loadAutomations = useAutomationStore(s => s.loadAutomations);
+
+  const notifications = useNotificationStore(s => s.notifications);
+  const loadNotifications = useNotificationStore(s => s.loadNotifications);
 
   useEffect(() => {
     loadDevices();
@@ -34,10 +40,10 @@ export default function HomeDashboardScreen() {
     ]);
   };
 
-  const favorites = getFavorites();
-  const onlineCount = getOnlineCount();
-  const offlineCount = getOfflineCount();
-  const activeAutomationsCount = getActiveCount();
+  const favorites = useMemo(() => devices.filter(d => d.isFavorite), [devices]);
+  const onlineCount = useMemo(() => devices.filter(d => d.connectionStatus === 'online').length, [devices]);
+  const offlineCount = useMemo(() => devices.filter(d => d.connectionStatus === 'offline').length, [devices]);
+  const activeAutomationsCount = useMemo(() => automations.filter(a => a.enabled).length, [automations]);
 
   const handleDevicePress = (id: string) => {
     router.push(`/device/${id}`);

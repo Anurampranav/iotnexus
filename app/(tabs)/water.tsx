@@ -74,7 +74,7 @@ export default function WaterManagementScreen() {
 
             <View style={styles.tankNodeCard}>
               <View style={styles.tankLevelVisual}>
-                <View style={[styles.tankLiquidFill, { height: `${tankLevel}%` }]} />
+                <View style={[styles.tankLiquidFill, { height: `${tankLevel}%` as `${number}%` }]} />
               </View>
               <Text style={styles.nodeTitle}>Tank</Text>
               <Text style={[styles.nodeValue, { color: Colors.primary }]}>{tankLevel}%</Text>

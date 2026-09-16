@@ -45,7 +45,7 @@ export const WaterPumpDetail: React.FC<WaterPumpDetailProps> = ({
           {/* Tank Outer Shell */}
           <View style={styles.tankShell}>
             {/* Water Fill Level */}
-            <View style={[styles.waterFill, { height: `${tankLevelPercent}%` }]}>
+            <View style={[styles.waterFill, { height: `${tankLevelPercent}%` as `${number}%` }]}>
               <View style={styles.waterTopSurface} />
             </View>
 

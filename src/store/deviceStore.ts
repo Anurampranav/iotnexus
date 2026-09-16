@@ -2,6 +2,16 @@ import { create } from 'zustand';
 import type { Device, DeviceCommandStatus } from '@models/device';
 import { deviceApiClient } from '../services/api/DeviceApiClient';
 
+// Lazy getter to break circular dependency with automationStore.
+// This is resolved at call-time (not import-time), so both stores can reference each other.
+let _automationStoreRef: any = null;
+function getAutomationStore() {
+  if (!_automationStoreRef) {
+    _automationStoreRef = require('./automationStore').useAutomationStore;
+  }
+  return _automationStoreRef;
+}
+
 interface DeviceStore {
   devices: Device[];
   isLoading: boolean;
@@ -16,9 +26,9 @@ interface DeviceStore {
   getOfflineCount: () => number;
 
   // Command dispatch
-  sendCommand: (deviceId: string, capability: string, value: boolean | number | string) => Promise<void>;
+  sendCommand: (deviceId: string, capability: string, value: boolean | number | string, depth?: number) => Promise<void>;
   setCommandStatus: (deviceId: string, capability: string, status: DeviceCommandStatus) => void;
-  updateCapabilityValue: (deviceId: string, capability: string, value: boolean | number | string) => void;
+  updateCapabilityValue: (deviceId: string, capability: string, value: boolean | number | string, depth?: number) => void;
   setDeviceOnline: (deviceId: string, online: boolean) => void;
 }
 
@@ -63,7 +73,7 @@ export const useDeviceStore = create<DeviceStore>((set, get) => ({
     ),
   })),
 
-  updateCapabilityValue: (deviceId, capability, value) => {
+  updateCapabilityValue: (deviceId, capability, value, depth = 0) => {
     set(state => ({
       devices: state.devices.map(d =>
         d.id !== deviceId ? d : {
@@ -82,11 +92,11 @@ export const useDeviceStore = create<DeviceStore>((set, get) => ({
       ),
     }));
 
-    // Trigger automation engine evaluation dynamically to avoid circular dependency imports
+    // Trigger automation engine evaluation — uses lazy getter to avoid circular dependency
     setTimeout(() => {
       try {
-        const { useAutomationStore } = require('./automationStore');
-        useAutomationStore.getState().evaluateRules(deviceId, capability, value);
+        const autoStore = getAutomationStore();
+        autoStore.getState().evaluateRules(deviceId, capability, value, depth);
       } catch (err) {
         console.error('Failed to trigger automation evaluation:', err);
       }
@@ -99,7 +109,7 @@ export const useDeviceStore = create<DeviceStore>((set, get) => ({
     ),
   })),
 
-  sendCommand: async (deviceId, capability, value) => {
+  sendCommand: async (deviceId, capability, value, depth = 0) => {
     const { setCommandStatus, updateCapabilityValue } = get();
 
     // 1. Mark as pending
@@ -110,10 +120,10 @@ export const useDeviceStore = create<DeviceStore>((set, get) => ({
       const updatedDevice = await deviceApiClient.sendCommand(deviceId, capability, value);
 
       if (updatedDevice) {
-        updateCapabilityValue(deviceId, capability, value);
+        updateCapabilityValue(deviceId, capability, value, depth);
       } else {
         // Fallback local update if network temporary delay
-        updateCapabilityValue(deviceId, capability, value);
+        updateCapabilityValue(deviceId, capability, value, depth);
       }
     } catch {
       setCommandStatus(deviceId, capability, 'failed');

@@ -274,8 +274,8 @@ export const useAutomationStore = create<AutomationStore>((set, get) => ({
           for (const act of rule.actions) {
             if (act.type === 'set_capability') {
               // Dispatch command. This calls sendCommand which triggers updateCapabilityValue.
-              // We pass (depth + 1) to evaluateRules to count execution depth recursively.
-              useDeviceStore.getState().sendCommand(act.deviceId!, act.capability!, act.value!);
+              // We pass (depth + 1) through sendCommand to count execution depth recursively and avoid infinite loops.
+              useDeviceStore.getState().sendCommand(act.deviceId!, act.capability!, act.value!, depth + 1);
               actionsExecuted++;
             } else if (act.type === 'send_notification') {
               useNotificationStore.getState().addNotification({
