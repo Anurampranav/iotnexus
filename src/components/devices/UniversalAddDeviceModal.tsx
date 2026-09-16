@@ -58,10 +58,10 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
         cleanupFn = cleanup;
       });
 
-      // Scan timeout after 8 seconds
+      // Scan timeout — 20s allows full subnet sweep (254 hosts) + BLE discovery
       const timer = setTimeout(() => {
         setIsScanning(false);
-      }, 8000);
+      }, 20000);
 
       return () => {
         clearTimeout(timer);
