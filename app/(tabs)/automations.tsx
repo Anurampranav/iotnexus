@@ -8,8 +8,8 @@ import { StatusBadge } from '@components/shared/StatusBadge';
 import { Colors, Typography, Spacing, Radius } from '@design/tokens';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { AutomationDetailsModal } from '../../src/components/automation/AutomationDetailsModal';
-import { AutomationBuilderModal } from '../../src/components/automation/AutomationBuilderModal';
+import { AutomationDetailsModal } from '@components/automation/AutomationDetailsModal';
+import { AutomationBuilderModal } from '@components/automation/AutomationBuilderModal';
 import type { AutomationRule } from '@models/automation';
 
 export default function AutomationsScreen() {

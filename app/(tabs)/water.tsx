@@ -14,13 +14,26 @@ export default function WaterManagementScreen() {
     loadDevices();
   }, []);
 
-  const findDevice = (id: string) => devices.find(d => d.id === id);
+  // Helper to match devices by ID, or fallback to keywords & device type (ERR-011)
+  const findWaterDevice = (id: string, nameKeywords: string[], type?: string) => {
+    const byId = devices.find(d => d.id === id);
+    if (byId) return byId;
 
-  const tankSensor = findDevice('dev-tank-sensor');
-  const sumpSensor = findDevice('dev-sump-sensor');
-  const tankPump = findDevice('dev-tank-pump');
-  const borewellPump = findDevice('dev-borewell-pump');
-  const irrigationPump = findDevice('dev-irrigation-pump');
+    return devices.find(d => {
+      const name = (d.name || '').toLowerCase();
+      const matchesKeyword = nameKeywords.some(kw => name.includes(kw));
+      if (type && d.type === type) return matchesKeyword || nameKeywords.length === 0;
+      return matchesKeyword;
+    });
+  };
+
+  const tankSensor = findWaterDevice('dev-tank-sensor', ['overhead', 'tank sensor', 'tank level'], 'water_sensor')
+    || devices.find(d => d.type === 'water_sensor');
+  const sumpSensor = findWaterDevice('dev-sump-sensor', ['sump sensor', 'sump level', 'sump'], 'water_sensor');
+  const tankPump = findWaterDevice('dev-tank-pump', ['tank pump', 'overhead pump', 'transfer pump'], 'pump')
+    || devices.find(d => d.type === 'pump');
+  const borewellPump = findWaterDevice('dev-borewell-pump', ['borewell', 'bore well', 'submersible'], 'pump');
+  const irrigationPump = findWaterDevice('dev-irrigation-pump', ['irrigation', 'garden', 'sprinkler', 'drip'], 'pump');
 
   const tankLevel = (tankSensor?.state['level']?.value as number) ?? 18;
   const sumpLevel = (sumpSensor?.state['level']?.value as number) ?? 65;

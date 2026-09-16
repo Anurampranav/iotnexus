@@ -13,7 +13,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { GlassCard } from '@components/glass/GlassCard';
 import { Colors, Typography, Spacing, Radius } from '@design/tokens';
 import { useDeviceStore } from '@store/deviceStore';
-import { NetworkDiscovery, RealDiscoveredDevice } from '../../native/NetworkDiscovery';
+import { NetworkDiscovery, RealDiscoveredDevice } from '@native/NetworkDiscovery';
 import type { Device } from '@models/device';
 
 interface UniversalAddDeviceModalProps {
@@ -49,12 +49,12 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
       ).start();
 
       // Start REAL Native Hardware & Subnet Scan
-      NetworkDiscovery.startScan((dev) => {
+      NetworkDiscovery.startScan((dev: RealDiscoveredDevice) => {
         setDiscoveredList((prev) => {
           if (prev.some((d) => d.id === dev.id)) return prev;
           return [...prev, dev];
         });
-      }).then((cleanup) => {
+      }).then((cleanup: () => void) => {
         cleanupFn = cleanup;
       });
 
@@ -114,6 +114,12 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
         power: { name: 'power', label: 'Power', type: 'boolean', writable: true },
         power_draw: { name: 'power_draw', label: 'Power Draw', type: 'float', unit: 'W', writable: false },
         voltage: { name: 'voltage', label: 'Voltage', type: 'float', unit: 'V', writable: false },
+        ...(item.type === 'light' ? {
+          brightness: { name: 'brightness', label: 'Brightness', type: 'percentage', writable: true },
+        } : {}),
+        ...(item.type === 'pump' || item.type === 'water_sensor' ? {
+          level: { name: 'level', label: 'Water Level', type: 'percentage', writable: false },
+        } : {}),
       },
       metadata: {
         ip: item.ip,
@@ -306,13 +312,13 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
                       style={styles.rescanBtn}
                       onPress={() => {
                         setIsScanning(true);
-                        NetworkDiscovery.startScan((dev) => {
+                        NetworkDiscovery.startScan((dev: RealDiscoveredDevice) => {
                           setDiscoveredList((prev) => {
                             if (prev.some((d) => d.id === dev.id)) return prev;
                             return [...prev, dev];
                           });
                         });
-                        setTimeout(() => setIsScanning(false), 8000);
+                        setTimeout(() => setIsScanning(false), 20000);
                       }}
                     >
                       <MaterialCommunityIcons name="refresh" size={18} color="#FFFFFF" />

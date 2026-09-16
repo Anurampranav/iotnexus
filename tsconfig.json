@@ -29,6 +29,9 @@
       ],
       "@utils/*": [
         "./src/utils/*"
+      ],
+      "@native/*": [
+        "./src/native/*"
       ]
     }
   },

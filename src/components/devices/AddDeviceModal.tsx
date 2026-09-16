@@ -19,9 +19,9 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { GlassCard } from '@components/glass/GlassCard';
 import { Colors, Typography, Spacing, Radius } from '@design/tokens';
 import { useDeviceStore } from '@store/deviceStore';
-import { deviceApiClient } from '../../services/api/DeviceApiClient';
+import { deviceApiClient } from '@services/api/DeviceApiClient';
 import type { PendingDevice } from '@models/pending';
-import type { Device, DeviceType } from '@models/device';
+import type { Device, DeviceType, DeviceProtocol } from '@models/device';
 
 interface AddDeviceModalProps {
   visible: boolean;
@@ -34,6 +34,17 @@ interface NetworkInfo {
   gateway: string;
   isWifiConnected: boolean;
 }
+
+const normalizeHardwareProtocol = (raw?: string): DeviceProtocol => {
+  if (!raw) return 'tuya_lan';
+  const lc = raw.toLowerCase();
+  if (lc.includes('tuya') || lc.includes('lan')) return 'tuya_lan';
+  if (lc.includes('ble') || lc.includes('bluetooth')) return 'ble';
+  if (lc.includes('mqtt')) return 'mqtt';
+  if (lc.includes('matter')) return 'matter';
+  if (lc.includes('zigbee')) return 'zigbee';
+  return 'custom';
+};
 
 export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ visible, onClose }) => {
   const [activeTab, setActiveTab] = useState<'scan' | 'manual'>('scan');
@@ -79,7 +90,7 @@ export const AddDeviceModal: React.FC<AddDeviceModalProps> = ({ visible, onClose
               name: hardware.name || `Smart Device (${hardware.ip})`,
               type: hardware.type || 'switch',
               manufacturer: hardware.protocol === 'tuya_lan' ? 'Tuya Smart Hardware' : 'Smart LAN Hardware',
-              protocol: (hardware.protocol as any) || 'tuya_lan',
+              protocol: normalizeHardwareProtocol(hardware.protocol),
               integrationId: 'tuya_local_driver',
               ip: hardware.ip,
               discoveredAt: new Date().toISOString(),

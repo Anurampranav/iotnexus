@@ -20,11 +20,20 @@ export const SmartPlugDetail: React.FC<SmartPlugDetailProps> = ({
   const isOn = device.state['power']?.value === true;
   const isOffline = device.connectionStatus !== 'online';
 
-  // Live Electrical Telemetry
-  const powerWatts = isOn ? (typeof device.state['power_draw']?.value === 'number' ? device.state['power_draw'].value : 185) : 0;
-  const voltage = isOn ? 234.2 : 0;
-  const currentMa = isOn ? Math.round((powerWatts / 234.2) * 1000) : 0;
-  const todayKwh = 1.42;
+  // Live Electrical Telemetry — read from device state when available (ERR-010)
+  const statePower = device.state['power_draw']?.value ?? device.state['power']?.value;
+  const powerWatts = isOn ? (typeof statePower === 'number' ? statePower : 185) : 0;
+
+  const stateVoltage = device.state['voltage']?.value;
+  const voltage = isOn ? (typeof stateVoltage === 'number' ? stateVoltage : 234.2) : 0;
+
+  const stateCurrent = device.state['current']?.value;
+  const currentMa = isOn
+    ? (typeof stateCurrent === 'number' ? stateCurrent : (voltage > 0 ? Math.round((powerWatts / voltage) * 1000) : 0))
+    : 0;
+
+  const stateEnergy = device.state['energy_today']?.value ?? device.state['energy']?.value;
+  const todayKwh = typeof stateEnergy === 'number' ? stateEnergy : (isOn ? 1.42 : 0);
 
   // Selected Countdown Timer
   const [activeTimer, setActiveTimer] = useState<number | null>(null);
