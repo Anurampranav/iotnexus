@@ -72,21 +72,49 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
   }, [visible]);
 
   const handleAddDeviceToStore = (item: RealDiscoveredDevice) => {
+    // Determine correct DeviceProtocol from the raw protocol string
+    const resolveProtocol = (raw: string): Device['protocol'] => {
+      const lc = raw.toLowerCase();
+      if (lc.includes('tuya')) return 'tuya_lan';
+      if (lc.includes('mqtt')) return 'mqtt';
+      if (lc.includes('wiz') || lc.includes('udp')) return 'custom';
+      if (lc.includes('ble') || lc.includes('bluetooth')) return 'ble';
+      if (lc.includes('zigbee')) return 'zigbee';
+      if (lc.includes('matter')) return 'matter';
+      // Default: if discovered via IP/subnet, it's likely a LAN device
+      if (item.ip) return 'tuya_lan';
+      return 'custom';
+    };
+
+    const resolveManufacturer = (raw: string): string => {
+      const lc = raw.toLowerCase();
+      if (lc.includes('wiz')) return 'Philips';
+      if (lc.includes('tuya')) return 'Tuya Smart';
+      if (lc.includes('mqtt')) return 'Coolify';
+      return 'Smart Hardware';
+    };
+
+    const now = new Date().toISOString();
+
     const newDevice: Device = {
       id: item.id,
       name: item.name,
       type: item.type,
-      manufacturer: item.protocol.includes('WiZ') ? 'Philips' : item.protocol.includes('MQTT') ? 'Coolify' : 'Smart Hardware',
+      manufacturer: resolveManufacturer(item.protocol),
       model: item.protocol,
-      protocol: item.protocol.includes('WiZ') ? 'custom' : item.protocol.includes('MQTT') ? 'mqtt' : 'ble',
+      protocol: resolveProtocol(item.protocol),
       integrationId: 'network_discovery',
       homeId: 'home_flurry_1',
       connectionStatus: 'online',
       room: 'Living Room',
       roomId: 'living_room',
       isFavorite: true,
-      lastSeen: new Date().toISOString(),
-      capabilities: {},
+      lastSeen: now,
+      capabilities: {
+        power: { name: 'power', label: 'Power', type: 'boolean', writable: true },
+        power_draw: { name: 'power_draw', label: 'Power Draw', type: 'float', unit: 'W', writable: false },
+        voltage: { name: 'voltage', label: 'Voltage', type: 'float', unit: 'V', writable: false },
+      },
       metadata: {
         ip: item.ip,
         port: item.port,
@@ -97,25 +125,25 @@ export const UniversalAddDeviceModal: React.FC<UniversalAddDeviceModalProps> = (
         power: {
           value: item.state ?? true,
           commandStatus: 'confirmed',
-          lastUpdated: new Date().toISOString(),
+          lastUpdated: now,
           isStale: false,
         },
         power_draw: {
           value: item.powerWatts ?? (item.type === 'switch' ? 185 : item.type === 'pump' ? 1650 : 12),
           commandStatus: 'confirmed',
-          lastUpdated: new Date().toISOString(),
+          lastUpdated: now,
           isStale: false,
         },
         level: {
           value: 78,
           commandStatus: 'confirmed',
-          lastUpdated: new Date().toISOString(),
+          lastUpdated: now,
           isStale: false,
         },
         brightness: {
           value: 85,
           commandStatus: 'confirmed',
-          lastUpdated: new Date().toISOString(),
+          lastUpdated: now,
           isStale: false,
         },
       },
