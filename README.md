@@ -4,7 +4,7 @@ A production-grade mobile IoT control, water infrastructure monitoring, and univ
 
 ---
 
-## 🌟 Key Capabilities.
+## 🌟 Key Capabilities
 
 ### 1. Universal Smart Life 5-Step Device Pairing Wizard
 - **Automated Mobile Network Detection**: Automatically locks onto your phone's active 2.4 GHz Wi-Fi (`Airtel_VivaanGowda`) and remembers network credentials securely via `SharedPreferences`.
@@ -16,17 +16,17 @@ A production-grade mobile IoT control, water infrastructure monitoring, and univ
   - **Step 5 (Result Screen)**: Instant success confirmation or retry/troubleshoot options.
 - **Active BLE Radar Scanner**: Background Bluetooth scan banner with 1-tap instant add.
 
-### 2. Autonomous Water & Irrigation Management.
+### 2. Autonomous Water & Irrigation Management
 - Real-time telemetry monitoring for **Borewell**, **Sump (65%)**, and **Overhead Tank (18% Low)**.
 - **Pump Safety & Dry-Run Interlocks**: Automatically prevents pump operation if the water source is below minimum safety thresholds.
 - Dedicated schematics and pump starter controls for Borewell Starter, Tank Transfer Pump, and Irrigation Line Valves.
 
-### 3. Event-Driven Automation Engine.
+### 3. Event-Driven Automation Engine
 - Multi-condition trigger evaluation (`AND` / `OR` logic).
 - Time-of-day schedules, sensor threshold triggers, and device state events.
 - In-app **Automation Builder Modal** for creating, editing, and toggling automated rules.
 
-### 4. Warm Charcoal Glassmorphism UI.
+### 4. Warm Charcoal Glassmorphism UI
 - Fully implemented custom design system:
   - **Background**: `#1E1B19`
   - **Surface**: `#2A2725`
@@ -35,7 +35,7 @@ A production-grade mobile IoT control, water infrastructure monitoring, and univ
 
 ---
 
-## 🛠️ Architecture & Tech Stack.
+## 🛠️ Architecture & Tech Stack
 
 ```mermaid
 graph TD
